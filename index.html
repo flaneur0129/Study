@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>네이버 뉴스 AI 분석기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              display: ['Newsreader', 'serif']
+            },
+            colors: {
+              primary: '#0071e3',
+              'primary-hover': '#0077ed',
+              'light-bg': '#f5f5f7',
+              'light-card': '#ffffff',
+              'light-text': '#1d1d1f',
+              'light-text-secondary': '#6e6e73',
+              'light-border': '#d2d2d7',
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      .material-symbols-outlined {
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+      }
+      input[type="date"]::-webkit-calendar-picker-indicator {
+        display: none;
+        -webkit-appearance: none;
+      }
+      button { cursor: pointer; }
+      button:disabled { opacity: 0.7; cursor: default; }
+      .filter-popup { display: none; }
+      .active-filter-badge {
+        background-color: #eef5ff;
+        color: #0071e3;
+        font-size: 0.75rem;
+        font-weight: 500;
+        padding: 2px 8px;
+        border-radius: 9999px;
+        margin-left: 8px;
+        display: inline-flex;
+        align-items: center;
+      }
+      .remove-filter-btn {
+        margin-left: 4px;
+        cursor: pointer;
+        font-size: 1rem;
+        line-height: 1;
+      }
+      /* 워드 클라우드 단어 스타일 추가 */
+      .word-cloud-word {
+        cursor: pointer;
+        transition: transform 0.2s ease-in-out, text-shadow 0.2s ease-in-out;
+        will-change: transform;
+        position: absolute;
+      }
+      .word-cloud-word:hover {
+        transform: scale(1.1);
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        z-index: 10;
+      }
+    </style>
+</head>
+<body class="bg-light-bg text-light-text font-sans">
+    <div id="loader-overlay" class="fixed inset-0 bg-white/80 backdrop-blur-sm z-50 hidden items-center justify-center flex-col">
+        <div class="w-10 h-10 border-4 border-gray-200 border-t-primary rounded-full animate-spin"></div>
+        <p id="loader-message" class="mt-4 text-light-text-secondary font-medium"></p>
+    </div>
+
+    <div class="flex flex-col min-h-screen">
+        <header class="sticky top-0 bg-light-card/80 backdrop-blur-lg border-b border-light-border z-40">
+            <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex items-center justify-between h-16">
+                    <div class="flex items-center gap-3">
+                        <span class="material-symbols-outlined text-primary text-3xl">query_stats</span>
+                        <h1 class="text-xl font-bold text-light-text">AI News Analysis</h1>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="flex-1 w-full">
+            <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                <div class="grid grid-cols-1 lg:grid-cols-12 lg:gap-8">
+                    <aside class="lg:col-span-3 lg:sticky top-24 self-start">
+                        <div class="p-6 bg-light-card rounded-2xl border border-light-border shadow-sm space-y-6">
+                            <h2 class="text-lg font-semibold">검색 및 분석</h2>
+                            <div class="space-y-4">
+                                <input id="query" type="text" class="w-full rounded-lg border-light-border bg-white hover:border-primary transition-colors focus:ring-primary focus:border-primary" value="세금 | 탈세 | 세법 | 소득 | 부동산 | 자본 | 금융 | 주주 | 증여 | 양도">
+                                <div class="grid grid-cols-2 gap-4">
+                                    <input id="startDate" type="date" class="w-full rounded-lg border-light-border bg-white hover:border-primary transition-colors focus:ring-1 focus:ring-primary/20 focus:border-primary text-gray-500" title="검색 시작일">
+                                    <input id="endDate" type="date" class="w-full rounded-lg border-light-border bg-white hover:border-primary transition-colors focus:ring-1 focus:ring-primary/20 focus:border-primary text-gray-500" title="검색 종료일">
+                                </div>
+                                <input id="totalCount" type="number" class="w-full rounded-lg border-light-border bg-white hover:border-primary transition-colors focus:ring-primary focus:border-primary" min="1" max="1000" title="검색할 기사 수" value="30">
+                                <button id="searchBtn" class="w-full bg-primary text-white font-semibold py-2.5 px-4 rounded-lg hover:bg-primary-hover transition-colors flex items-center justify-center gap-2">
+                                    <span class="material-symbols-outlined">search</span>
+                                    <span>뉴스 검색</span>
+                                </button>
+                            </div>
+                            <div id="actions-group" class="pt-4 border-t border-light-border space-y-2">
+                                <button id="classifyBtn" class="w-full bg-primary/10 text-primary font-semibold py-2.5 px-4 rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center gap-2">
+                                    <span class="material-symbols-outlined">psychology</span>
+                                    <span>AI 분류 분석</span>
+                                </button>
+                                <button id="analyzeBtn" class="w-full bg-primary/10 text-primary font-semibold py-2.5 px-4 rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center gap-2">
+                                    <span class="material-symbols-outlined">article</span>
+                                    <span>AI 보고서 생성</span>
+                                </button>
+                                <button id="wordCloudBtn" class="w-full bg-primary/10 text-primary font-semibold py-2.5 px-4 rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center gap-2">
+                                    <span class="material-symbols-outlined">cloud_queue</span>
+                                    <span>키워드 분석</span>
+                                </button>
+                            </div>
+                             <div class="pt-4 border-t border-light-border space-y-2">
+                                <button id="csvBtn" class="w-full bg-gray-100 text-light-text-secondary font-semibold py-2.5 px-4 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center gap-2">
+                                    <span class="material-symbols-outlined">download</span>
+                                    <span>CSV 저장</span>
+                                </button>
+                            </div>
+                        </div>
+                    </aside>
+
+                    <div class="lg:col-span-9 mt-8 lg:mt-0">
+                        <div id="status" class="text-center text-light-text-secondary mb-4 min-h-[1.5rem]"></div>
+                        <div id="results-container" class="bg-light-card rounded-2xl border border-light-border shadow-sm overflow-hidden"></div>
+                        <div id="chat-container" class="mt-8 bg-light-card rounded-2xl border border-light-border shadow-sm hidden">
+                            <div class="p-4 border-b border-light-border">
+                                <h3 class="text-lg font-semibold flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-primary">smart_toy</span>
+                                    AI에게 질문하기
+                                </h3>
+                            </div>
+                            <div id="chat-history" class="p-4 h-64 overflow-y-auto space-y-4"></div>
+                            <div class="p-4 border-t border-light-border flex gap-2">
+                                <input id="chat-input" type="text" class="flex-grow rounded-lg border-light-border focus:ring-primary focus:border-primary" placeholder="검색된 기사에 대해 질문하세요...">
+                                <button id="chat-send-btn" class="bg-primary text-white font-semibold py-2 px-4 rounded-lg hover:bg-primary-hover transition-colors">
+                                    <span class="material-symbols-outlined">send</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals and Popups -->
+    <div id="wordCloudModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white">키워드 분석</h2>
+                <button id="wordCloudCloseBtn" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+                </button>
+            </div>
+            <div id="wordCloudContainer" class="p-8 overflow-y-auto flex flex-wrap items-center justify-center gap-4" style="position: relative; min-height: 500px;"></div>
+        </div>
+    </div>
+
+    <div id="dateFilterPopup" class="filter-popup absolute bg-white p-4 rounded-lg shadow-lg border z-20 w-64">
+        <h4 class="font-semibold mb-2 text-sm">날짜 필터</h4>
+        <div class="space-y-2">
+            <input type="date" id="filterStartDate" class="w-full rounded-lg border-light-border text-sm">
+            <input type="date" id="filterEndDate" class="w-full rounded-lg border-light-border text-sm">
+        </div>
+        <div class="flex justify-end gap-2 mt-4">
+            <button id="dateFilterClearBtn" class="bg-gray-200 px-3 py-1 rounded-md text-sm">초기화</button>
+            <button id="dateFilterApplyBtn" class="bg-primary text-white px-3 py-1 rounded-md text-sm">적용</button>
+        </div>
+    </div>
+    
+    <div id="textFilterPopup" class="filter-popup absolute bg-white p-4 rounded-lg shadow-lg border z-20 w-64">
+        <h4 id="textFilterPopupTitle" class="font-semibold mb-2 text-sm"></h4>
+        <input type="text" id="textFilterInput" class="w-full rounded-lg border-light-border mb-2 text-sm">
+        <div class="flex justify-end gap-2">
+            <button id="textFilterClearBtn" class="bg-gray-200 px-3 py-1 rounded-md text-sm">초기화</button>
+            <button id="textFilterApplyBtn" class="bg-primary text-white px-3 py-1 rounded-md text-sm">적용</button>
+        </div>
+    </div>
+
+    <div id="categoryFilterPopup" class="filter-popup absolute bg-white p-4 rounded-lg shadow-lg border z-20 w-64">
+        <h4 class="font-semibold mb-2 text-sm">분류 필터</h4>
+        <div id="categoryFilterOptions" class="space-y-2"></div>
+        <div class="flex justify-end gap-2 mt-4">
+            <button id="categoryFilterClearBtn" class="bg-gray-200 px-3 py-1 rounded-md text-sm">초기화</button>
+            <button id="categoryFilterApplyBtn" class="bg-primary text-white px-3 py-1 rounded-md text-sm">적용</button>
+        </div>
+    </div>
+    
+    <script>
+        let currentResults = [];
+        let displayedResults = [];
+        let activeFilters = {};
+        let currentFilteringColumn = null;
+        const allCategories = ["수사/조사", "명시적 탈세 혐의", "잠재적 탈세 리스크", "국제/역외 조세", "기업 세무", "세법/정책", "경제 동향", "비관련"];
+
+        const dom = {
+            query: document.getElementById('query'),
+            startDate: document.getElementById('startDate'),
+            endDate: document.getElementById('endDate'),
+            totalCount: document.getElementById('totalCount'),
+            searchBtn: document.getElementById('searchBtn'),
+            classifyBtn: document.getElementById('classifyBtn'),
+            analyzeBtn: document.getElementById('analyzeBtn'),
+            wordCloudBtn: document.getElementById('wordCloudBtn'),
+            resetFilterBtn: document.getElementById('resetFilterBtn'),
+            csvBtn: document.getElementById('csvBtn'),
+            status: document.getElementById('status'),
+            resultsContainer: document.getElementById('results-container'),
+            loaderOverlay: document.getElementById('loader-overlay'),
+            loaderMessage: document.getElementById('loader-message'),
+            wordCloudModal: document.getElementById('wordCloudModal'),
+            wordCloudContainer: document.getElementById('wordCloudContainer'),
+            wordCloudCloseBtn: document.getElementById('wordCloudCloseBtn'),
+            textFilterPopup: document.getElementById('textFilterPopup'),
+            textFilterPopupTitle: document.getElementById('textFilterPopupTitle'),
+            textFilterInput: document.getElementById('textFilterInput'),
+            textFilterApplyBtn: document.getElementById('textFilterApplyBtn'),
+            textFilterClearBtn: document.getElementById('textFilterClearBtn'),
+            categoryFilterPopup: document.getElementById('categoryFilterPopup'),
+            categoryFilterOptions: document.getElementById('categoryFilterOptions'),
+            categoryFilterApplyBtn: document.getElementById('categoryFilterApplyBtn'),
+            categoryFilterClearBtn: document.getElementById('categoryFilterClearBtn'),
+            dateFilterPopup: document.getElementById('dateFilterPopup'),
+            filterStartDate: document.getElementById('filterStartDate'),
+            filterEndDate: document.getElementById('filterEndDate'),
+            dateFilterApplyBtn: document.getElementById('dateFilterApplyBtn'),
+            dateFilterClearBtn: document.getElementById('dateFilterClearBtn'),
+            chatContainer: document.getElementById('chat-container'),
+            chatHistory: document.getElementById('chat-history'),
+            chatInput: document.getElementById('chat-input'),
+            chatSendBtn: document.getElementById('chat-send-btn'),
+        };
+        
+        function initializeEventListeners() {
+            initializeUI();
+            dom.searchBtn.addEventListener('click', handleSearch);
+            dom.classifyBtn.addEventListener('click', handleClassification);
+            dom.analyzeBtn.addEventListener('click', handleAdvancedAnalysis);
+            dom.wordCloudBtn.addEventListener('click', handleWordCloud);
+            dom.csvBtn.addEventListener('click', handleCsvExport);
+            
+            dom.wordCloudCloseBtn.addEventListener('click', () => dom.wordCloudModal.classList.add('hidden'));
+            dom.wordCloudModal.addEventListener('click', (e) => { if (e.target === dom.wordCloudModal) dom.wordCloudModal.classList.add('hidden'); });
+
+            dom.textFilterApplyBtn.addEventListener('click', applyTextFilter);
+            dom.textFilterClearBtn.addEventListener('click', clearTextFilter);
+            dom.categoryFilterApplyBtn.addEventListener('click', applyCategoryFilter);
+            dom.categoryFilterClearBtn.addEventListener('click', clearCategoryFilter);
+            dom.dateFilterApplyBtn.addEventListener('click', applyDateFilter);
+            dom.dateFilterClearBtn.addEventListener('click', clearDateFilter);
+            
+            dom.chatSendBtn.addEventListener('click', handleAskGemini);
+            dom.chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAskGemini();
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!dom.textFilterPopup.contains(e.target) && !e.target.closest('.filterable-header')) {
+                    dom.textFilterPopup.style.display = 'none';
+                }
+                if (!dom.categoryFilterPopup.contains(e.target) && !e.target.closest('.filterable-header')) {
+                    dom.categoryFilterPopup.style.display = 'none';
+                }
+                if (!dom.dateFilterPopup.contains(e.target) && !e.target.closest('.filterable-header')) {
+                    dom.dateFilterPopup.style.display = 'none';
+                }
+            });
+        }
+        
+        function applyDateFilter() {
+            const startDate = dom.filterStartDate.value;
+            const endDate = dom.filterEndDate.value;
+            if (startDate || endDate) {
+                activeFilters.pubDate = { start: startDate, end: endDate };
+            } else {
+                delete activeFilters.pubDate;
+            }
+            dom.dateFilterPopup.style.display = 'none';
+            applyAllFiltersAndSort();
+        }
+
+        function clearDateFilter() {
+            delete activeFilters.pubDate;
+            dom.filterStartDate.value = '';
+            dom.filterEndDate.value = '';
+            dom.dateFilterPopup.style.display = 'none';
+            applyAllFiltersAndSort();
+        }
+        
+        function showDateFilterPopup(targetElement) {
+            dom.filterStartDate.value = activeFilters.pubDate?.start || '';
+            dom.filterEndDate.value = activeFilters.pubDate?.end || '';
+            const rect = targetElement.getBoundingClientRect();
+            dom.dateFilterPopup.style.left = `${rect.left}px`;
+            dom.dateFilterPopup.style.top = `${rect.bottom + window.scrollY}px`;
+            dom.dateFilterPopup.style.display = 'block';
+        }
+
+        function applyTextFilter() {
+            const keyword = dom.textFilterInput.value.trim();
+            if (keyword) {
+                activeFilters[currentFilteringColumn] = keyword;
+            } else {
+                delete activeFilters[currentFilteringColumn];
+            }
+            dom.textFilterPopup.style.display = 'none';
+            applyAllFiltersAndSort();
+        }
+
+        function clearTextFilter() {
+            delete activeFilters[currentFilteringColumn];
+            dom.textFilterInput.value = '';
+            dom.textFilterPopup.style.display = 'none';
+            applyAllFiltersAndSort();
+        }
+        
+        function applyCategoryFilter() {
+            const selected = [];
+            document.querySelectorAll('#categoryFilterOptions input:checked').forEach(checkbox => {
+                selected.push(checkbox.value);
+            });
+            if (selected.length > 0) {
+                activeFilters.topic = selected;
+            } else {
+                delete activeFilters.topic;
+            }
+            dom.categoryFilterPopup.style.display = 'none';
+            applyAllFiltersAndSort();
+        }
+
+        function clearCategoryFilter() {
+            delete activeFilters.topic;
+            document.querySelectorAll('#categoryFilterOptions input').forEach(checkbox => checkbox.checked = false);
+            dom.categoryFilterPopup.style.display = 'none';
+            applyAllFiltersAndSort();
+        }
+
+        function showTextFilterPopup(key, targetElement) {
+            currentFilteringColumn = key;
+            dom.textFilterPopupTitle.textContent = `${key === 'title' ? '제목' : '요약'} 필터`;
+            dom.textFilterInput.value = activeFilters[key] || '';
+            
+            const rect = targetElement.getBoundingClientRect();
+            dom.textFilterPopup.style.left = `${rect.left}px`;
+            dom.textFilterPopup.style.top = `${rect.bottom + window.scrollY}px`;
+            dom.textFilterPopup.style.display = 'block';
+            dom.textFilterInput.focus();
+        }
+
+        function showCategoryFilterPopup(targetElement) {
+            const optionsContainer = dom.categoryFilterOptions;
+            optionsContainer.innerHTML = '';
+            allCategories.forEach(cat => {
+                const isChecked = activeFilters.topic && activeFilters.topic.includes(cat);
+                optionsContainer.innerHTML += `
+                    <label class="flex items-center space-x-2 text-sm">
+                        <input type="checkbox" value="${cat}" ${isChecked ? 'checked' : ''} class="rounded border-gray-300 text-primary shadow-sm focus:border-primary focus:ring focus:ring-offset-0 focus:ring-indigo-200 focus:ring-opacity-50">
+                        <span>${cat}</span>
+                    </label>
+                `;
+            });
+            
+            const rect = targetElement.getBoundingClientRect();
+            dom.categoryFilterPopup.style.left = `${rect.left}px`;
+            dom.categoryFilterPopup.style.top = `${rect.bottom + window.scrollY}px`;
+            dom.categoryFilterPopup.style.display = 'block';
+        }
+
+        function resetAllFiltersAndSort() {
+            if (currentResults.length === 0) return;
+            activeFilters = {};
+            displayedResults = [...currentResults];
+            updateStatus(`총 ${currentResults.length}개의 기사를 표시합니다.`);
+            renderTable();
+        }
+
+        function applyAllFiltersAndSort() {
+            let results = [...currentResults];
+            Object.keys(activeFilters).forEach(key => {
+                if (key === 'topic') {
+                    const selectedTopics = activeFilters[key];
+                    if (selectedTopics && selectedTopics.length > 0) {
+                        results = results.filter(item => item.topic && selectedTopics.includes(item.topic));
+                    }
+                } else if (key === 'pubDate') {
+                    const { start, end } = activeFilters[key];
+                    const startDate = start ? new Date(start) : null;
+                    const endDate = end ? new Date(end) : null;
+                    if(endDate) endDate.setHours(23, 59, 59, 999);
+                    
+                    results = results.filter(item => {
+                        const itemDate = new Date(item.pubDate.replace(/\.\s/g, '-').replace(/\.$/, ''));
+                        const isAfterStart = !startDate || itemDate >= startDate;
+                        const isBeforeEnd = !endDate || itemDate <= endDate;
+                        return isAfterStart && isBeforeEnd;
+                    });
+
+                } else {
+                    const filterValue = activeFilters[key].toLowerCase();
+                    if (filterValue) {
+                        results = results.filter(item => item[key] && item[key].toLowerCase().includes(filterValue));
+                    }
+                }
+            });
+            displayedResults = results;
+            updateStatus(`${displayedResults.length} / ${currentResults.length}개 표시`);
+            renderTable();
+        }
+        
+        function handleServerResponse(responseString, successCallback, taskName) {
+            try {
+                const data = JSON.parse(responseString);
+                if (data.error) { throw new Error(data.error); }
+                successCallback(data);
+            } catch (error) {
+                hideLoader();
+                displayError(`${taskName} 실패: ${error.message}`);
+            }
+        }
+        
+        function handleSearch() {
+            if (!dom.query.value) { 
+                dom.query.value = "세금 | 탈세 | 세법 | 소득 | 부동산 | 자본 | 금융 | 주주 | 증여 | 양도";
+            }
+            const count = parseInt(dom.totalCount.value, 10) || 30;
+            if (isNaN(count) || count < 1 || count > 1000) { alert('검색 개수는 1에서 1000 사이의 숫자로 입력해주세요.'); return; }
+            
+            setAllButtonsDisabled(true);
+            showLoader('뉴스 검색 중...');
+            
+            google.script.run
+                .withSuccessHandler(response => handleServerResponse(response, data => {
+                    hideLoader();
+                    currentResults = (data.length > 0) 
+                        ? data.map((item, index) => ({...item, originalIndex: index }))
+                        : [];
+                    displayedResults = [...currentResults];
+                    activeFilters = {};
+                    updateStatus(data.length === 0 ? '검색 결과가 없습니다.' : `총 ${data.length}개의 기사를 찾았습니다.`);
+                    renderTable();
+                    updateActionButtonsState();
+                    dom.chatContainer.classList.toggle('hidden', currentResults.length === 0);
+                    dom.chatHistory.innerHTML = '';
+                }, '뉴스 검색'))
+                .withFailureHandler(error => { 
+                  hideLoader(); 
+                  displayError(`뉴스 검색 실패: ${error.message}`); 
+                  updateActionButtonsState();
+                })
+                .searchNaverNews(dom.query.value, dom.startDate.value, dom.endDate.value, count);
+        }
+        
+        function initializeUI() {
+          updateStatus('분석할 뉴스를 검색해주세요.');
+          updateActionButtonsState();
+          renderTable();
+        }
+
+        function renderTable() {
+            if (currentResults.length === 0) {
+              dom.resultsContainer.innerHTML = '<div class="p-8 text-center text-light-text-secondary">검색 결과가 여기에 표시됩니다.</div>';
+              dom.chatContainer.classList.add('hidden');
+              return;
+            }
+            const hasTopic = currentResults.some(item => item.hasOwnProperty('topic'));
+            const headers = [
+                { key: 'index', name: '번호' }, { key: 'pubDate', name: '날짜', filterable: true },
+                ...(hasTopic ? [{ key: 'topic', name: '분류', filterable: true }] : []),
+                { key: 'title', name: '제목', filterable: true }, { key: 'description', name: '요약', filterable: true },
+            ];
+            
+            const categoryColors = {
+                "수사/조사": "bg-pink-100 text-pink-800",
+                "명시적 탈세 혐의": "bg-red-100 text-red-800",
+                "잠재적 탈세 리스크": "bg-orange-100 text-orange-800",
+                "국제/역외 조세": "bg-yellow-100 text-yellow-800",
+                "기업 세무": "bg-green-100 text-green-800",
+                "세법/정책": "bg-purple-100 text-purple-800",
+                "경제 동향": "bg-blue-100 text-blue-800",
+                "비관련": "bg-gray-100 text-gray-800",
+            };
+
+            let headerHtml = headers.map(h => {
+                let filterBadge = '';
+                if (h.filterable && activeFilters[h.key]) {
+                    let filterText = '';
+                    if (h.key === 'pubDate') {
+                        const {start, end} = activeFilters[h.key];
+                        if (start && end) filterText = `${start} ~ ${end}`;
+                        else if (start) filterText = `${start} 이후`;
+                        else if (end) filterText = `${end} 이전`;
+                    } else {
+                      filterText = Array.isArray(activeFilters[h.key]) ? `${activeFilters[h.key].length}개 선택` : activeFilters[h.key];
+                    }
+                    filterBadge = `<span class="active-filter-badge">${filterText}<span class="remove-filter-btn" onclick="event.stopPropagation(); clearColumnFilter('${h.key}')">&times;</span></span>`;
+                }
+                return `<th class="px-6 py-3 text-left font-medium text-light-text-secondary uppercase tracking-wider whitespace-nowrap ${h.filterable ? 'filterable-header cursor-pointer' : ''}" data-key="${h.key}">${h.name}${filterBadge}</th>`;
+            }).join('');
+
+            let tableHTML = `<div class="overflow-x-auto"><table class="min-w-full text-sm">
+                  <thead class="bg-gray-50"><tr>${headerHtml}</tr></thead>
+                  <tbody class="bg-white divide-y divide-gray-200">
+                    ${displayedResults.map((item) => `
+                      <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 whitespace-nowrap text-light-text-secondary">${item.originalIndex + 1}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-light-text-secondary">${item.pubDate}</td>
+                        ${hasTopic ? `<td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${categoryColors[item.topic] || 'bg-gray-100 text-gray-800'}">${item.topic || ''}</span></td>` : ''}
+                        <td class="px-6 py-4 whitespace-nowrap"><a href="${item.originallink}" target="_blank" class="text-light-text font-semibold hover:text-primary transition-colors">${item.title}</a></td>
+                        <td class="px-6 py-4 text-light-text-secondary whitespace-nowrap">${item.description}</td>
+                      </tr>`).join('')}
+                  </tbody>
+                </table></div>`;
+            dom.resultsContainer.innerHTML = tableHTML;
+
+            document.querySelectorAll('.filterable-header').forEach(header => {
+                header.addEventListener('click', (e) => {
+                    const key = e.currentTarget.dataset.key;
+                    if (key === 'topic') showCategoryFilterPopup(e.currentTarget);
+                    else if (key === 'pubDate') showDateFilterPopup(e.currentTarget);
+                    else showTextFilterPopup(key, e.currentTarget);
+                });
+            });
+        }
+        
+        function clearColumnFilter(key) {
+            delete activeFilters[key];
+            applyAllFiltersAndSort();
+        }
+
+        function setAllButtonsDisabled(disabled) {
+          [dom.searchBtn, dom.classifyBtn, dom.analyzeBtn, dom.wordCloudBtn, dom.resetFilterBtn, dom.csvBtn].forEach(btn => {
+            if(btn) btn.disabled = disabled;
+          });
+        }
+
+        function updateActionButtonsState() {
+            const disabled = currentResults.length === 0;
+            [dom.classifyBtn, dom.analyzeBtn, dom.wordCloudBtn, dom.resetFilterBtn, dom.csvBtn].forEach(btn => {
+              if(btn) btn.disabled = disabled;
+            });
+        }
+
+        function updateStatus(message) { dom.status.textContent = message; }
+        
+        function showLoader(message) { 
+            setAllButtonsDisabled(true);
+            dom.loaderMessage.textContent = message; 
+            dom.loaderOverlay.classList.remove('hidden');
+            dom.loaderOverlay.classList.add('flex');
+        }
+
+        function hideLoader() { 
+            dom.loaderOverlay.classList.add('hidden');
+            dom.loaderOverlay.classList.remove('flex');
+            setAllButtonsDisabled(false);
+        }
+
+        function displayError(message) { 
+            hideLoader();
+            updateActionButtonsState();
+            dom.status.innerHTML = `<p class="text-red-600 font-medium">오류: ${message}</p>`; 
+        }
+        
+        async function handleClassification() {
+            if (currentResults.length === 0) return;
+            showLoader('AI 분류 분석 중...');
+            
+            const CHUNK_SIZE = 20;
+            const chunks = [];
+            for (let i = 0; i < currentResults.length; i += CHUNK_SIZE) {
+                chunks.push(currentResults.slice(i, i + CHUNK_SIZE));
+            }
+
+            const promises = chunks.map((chunk, index) => {
+                return new Promise((resolve, reject) => {
+                    google.script.run
+                        .withSuccessHandler(response => {
+                            try {
+                                const data = JSON.parse(response);
+                                if (data.error) {
+                                    reject(new Error(data.error));
+                                } else {
+                                    resolve(data);
+                                }
+                            } catch (e) {
+                                reject(e);
+                            }
+                        })
+                        .withFailureHandler(reject)
+                        .classifyNewsChunk(chunk);
+                });
+            });
+
+            try {
+                const allClassifications = await Promise.all(promises);
+                allClassifications.flat().forEach(result => {
+                    const targetArticle = currentResults.find(article => article.originalIndex === result.index);
+                    if (targetArticle) {
+                        targetArticle.topic = result.topic;
+                    }
+                });
+            } catch (error) {
+                 displayError(`AI 분류 분석 실패: ${error.message}`);
+            } finally {
+                hideLoader();
+                applyAllFiltersAndSort();
+                updateActionButtonsState();
+            }
+        }
+
+        function handleAdvancedAnalysis() {
+            if (displayedResults.length === 0) { alert('분석할 데이터가 없습니다.'); return; }
+            
+            const payload = displayedResults.filter(item => item.topic && item.topic !== '비관련');
+            if (payload.length === 0) {
+              alert('분석할 관련 기사가 없습니다. 먼저 AI 분류 분석을 실행해주세요.');
+              return;
+            }
+            showLoader('AI 보고서 생성 중...');
+            google.script.run
+                .withSuccessHandler(response => handleServerResponse(response, data => {
+                    hideLoader();
+                    updateActionButtonsState();
+                    openAnalysisInNewWindow(data.markdown); 
+                }, 'AI 보고서 생성'))
+                .withFailureHandler(error => { 
+                  hideLoader(); 
+                  displayError(`AI 보고서 생성 실패: ${error.message}`); 
+                  updateActionButtonsState();
+                })
+                .performAdvancedAnalysis(payload);
+        }
+        
+        function handleAskGemini() {
+            const question = dom.chatInput.value.trim();
+            if (!question || currentResults.length === 0) return;
+
+            addMessageToChat('user', question);
+            dom.chatInput.value = '';
+            dom.chatSendBtn.disabled = true;
+
+            const thinkingMessage = addMessageToChat('assistant', '...');
+            
+            google.script.run
+                .withSuccessHandler(response => handleServerResponse(response, data => {
+                    thinkingMessage.innerHTML = data.answer.replace(/\n/g, '<br>');
+                    dom.chatSendBtn.disabled = false;
+                }, 'AI 질의응답'))
+                .withFailureHandler(error => {
+                    thinkingMessage.innerHTML = `<span class="text-red-500">오류: ${error.message}</span>`;
+                    dom.chatSendBtn.disabled = false;
+                })
+                .askGeminiAboutNews(question, displayedResults);
+        }
+
+        function addMessageToChat(role, text) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+            const bubble = document.createElement('div');
+            bubble.className = `max-w-xs md:max-w-md p-3 rounded-2xl ${role === 'user' ? 'bg-primary text-white' : 'bg-gray-200 text-light-text'}`;
+            bubble.innerHTML = text;
+            messageDiv.appendChild(bubble);
+            dom.chatHistory.appendChild(messageDiv);
+            dom.chatHistory.scrollTop = dom.chatHistory.scrollHeight;
+            return bubble;
+        }
+
+        function simpleMarkdownToHtml(markdownText) {
+            let html = markdownText
+                .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+                .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+                .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+                .replace(/\[#(\d+)\]\(([^)]+)\)/g, `<a href="$2" target="_blank" title="기사 #$1 보기">[#$1]</a>`);
+
+            html = html.replace(/^### \[(.*?)\]\((.*?)\)/gim, '<h3><a href="$2" target="_blank">$1</a></h3>');
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+            const lines = html.split('\n');
+            let newHtml = '';
+            let inTable = false;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                 if (line.match(/^\|:?--.*--:?\|/)) continue;
+                if (line.startsWith('|') && line.endsWith('|')) {
+                    const cells = line.split('|').slice(1, -1);
+                    if (!inTable) {
+                        newHtml += '<table>';
+                        newHtml += `<thead><tr>${cells.map(cell => `<th>${cell.trim()}</th>`).join('')}</tr></thead><tbody>`;
+                        inTable = true;
+                    } else {
+                         newHtml += `<tr>${cells.map(cell => `<td>${cell.trim().replace(/\n/g, '<br>')}</td>`).join('')}</tr>`;
+                    }
+                } else {
+                    if (inTable) {
+                        newHtml += '</tbody></table>';
+                        inTable = false;
+                    }
+                    if (line.startsWith('- ')) newHtml += `<ul><li>${line.substring(2)}</li></ul>`;
+                    else if (line) newHtml += line.startsWith('<h') ? line : `<p>${line}</p>`;
+                }
+            }
+            if (inTable) newHtml += '</tbody></table>';
+            
+            newHtml = newHtml.replace(/<\/ul>\s*<ul>/g, '');
+            return newHtml;
+        }
+
+        function openAnalysisInNewWindow(markdown) {
+            const html = simpleMarkdownToHtml(markdown);
+            
+            let reportHtml = `<!DOCTYPE html><html lang="ko"><head><title>AI 뉴스 분석 보고서</title>
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+            <style>
+                body { font-family: 'Inter', -apple-system, sans-serif; background-color: #f5f7f8; color: #1d1d1f; line-height: 1.7; margin: 0; padding: 2rem; }
+                .report-container { max-width: 850px; margin: 2rem auto; background: #fff; padding: 2.5rem 3rem; border-radius: 1rem; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05), 0 4px 6px -4px rgb(0 0 0 / 0.1); }
+                h1,h2,h3 { font-weight: 700; color: #111827; letter-spacing: -0.025em; }
+                h1 { font-size: 2rem; text-align: center; margin-bottom: 2.5rem; }
+                h2 { font-size: 1.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.75rem; margin-top: 3rem; }
+                h3 { font-size: 1.25rem; margin-top: 2.5rem; }
+                a { color: #0d7ff2; text-decoration: none; font-weight: 500; }
+                a:hover { text-decoration: underline; }
+                h3 a { color: inherit; text-decoration: none; }
+                h3 a:hover { text-decoration: underline; }
+                p, li { color: #374151; }
+                ul { padding-left: 0; list-style-type: none; margin-top: 1rem; }
+                ul li { position: relative; padding-left: 1.5rem; margin-bottom: 0.5rem; }
+                ul li::before { content: '-'; color: #111827; font-weight: bold; position: absolute; left: 0; top: 0; }
+                table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: 0.9rem; border-radius: 0.75rem; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05); overflow: hidden; }
+                th, td { padding: 12px 16px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+                th { background-color: #f9fafb; font-weight: 600; color: #4b5563; }
+                tbody tr:last-child td { border-bottom: none; }
+                strong, b { font-weight: 600; color: #000; }
+            </style></head><body><div class="report-container">${html}</div></body></html>`;
+
+            const newWindow = window.open("", "_blank");
+            if (newWindow) {
+                newWindow.document.write(reportHtml);
+                newWindow.document.close();
+            } else {
+                alert("팝업이 차단되었습니다. 팝업을 허용하고 다시 시도해주세요.");
+            }
+        }
+        
+        function handleWordCloud() {
+            if (displayedResults.length === 0) { alert('분석할 키워드가 없습니다.'); return; }
+            dom.wordCloudModal.classList.remove('hidden');
+            dom.wordCloudModal.classList.add('flex');
+            dom.wordCloudContainer.innerHTML = '<div class="w-10 h-10 border-4 border-gray-200 border-t-primary rounded-full animate-spin"></div>';
+            const analysisPayload = displayedResults.map(item => ({ title: item.title, description: item.description }));
+            google.script.run
+                .withSuccessHandler(response => handleServerResponse(response, displayWordCloud, '키워드 분석'))
+                .withFailureHandler(error => { 
+                  hideLoader();
+                  dom.wordCloudContainer.innerHTML = `<p class="text-red-600">키워드 분석 실패: ${error.message}</p>`; 
+                  updateActionButtonsState();
+                })
+                .getNounsForKeywordAnalysis(analysisPayload, dom.query.value);
+        }
+
+        // --- NEW INTERACTIVE WORD CLOUD LOGIC ---
+
+        function intersects(rect1, rect2) {
+            const padding = 4; // 단어 간 최소 간격
+            return !(rect2.left > rect1.right + padding ||
+                     rect2.right < rect1.left - padding ||
+                     rect2.top > rect1.bottom + padding ||
+                     rect2.bottom < rect1.top - padding);
+        }
+
+        function handleWordClick(word) {
+            // 제목(title)을 기준으로 필터링합니다.
+            activeFilters['title'] = word;
+            // 다른 텍스트 필터가 있다면 초기화합니다.
+            delete activeFilters['description'];
+            
+            applyAllFiltersAndSort();
+            dom.wordCloudModal.classList.add('hidden');
+        }
+
+        function displayWordCloud(wordList) {
+            const container = dom.wordCloudContainer;
+            if (!wordList || wordList.length === 0) {
+                container.innerHTML = '<p class="text-light-text-secondary">분석할 유효한 키워드가 없습니다.</p>';
+                return;
+            }
+            container.innerHTML = '';
+
+            const placedWords = [];
+            const containerWidth = container.offsetWidth;
+            const containerHeight = container.offsetHeight;
+            const center = { x: containerWidth / 2, y: containerHeight / 2 };
+
+            wordList.forEach((item, index) => {
+                const wordEl = document.createElement('span');
+                const fontSize = 14 + ((wordList.length - index) / wordList.length) * 36;
+                
+                wordEl.textContent = item.word;
+                wordEl.style.fontSize = `${fontSize}px`;
+                wordEl.className = 'word-cloud-word font-sans';
+                wordEl.style.fontWeight = index < 10 ? '600' : '500';
+                wordEl.style.color = index === 0 ? 'var(--primary-color, #0071e3)' : `hsl(${Math.random() * 360}, 50%, 45%)`;
+                
+                wordEl.addEventListener('click', () => handleWordClick(item.word));
+
+                // 임시로 추가해서 크기 측정
+                container.appendChild(wordEl);
+                const wordRect = wordEl.getBoundingClientRect();
+                container.removeChild(wordEl);
+                const wordWidth = wordRect.width;
+                const wordHeight = wordRect.height;
+                
+                let foundPosition = false;
+                let angle = Math.random() * 2 * Math.PI;
+                let radius = 0;
+                let attempts = 0;
+
+                while (attempts < 500 && !foundPosition) {
+                    const x = center.x + radius * Math.cos(angle);
+                    const y = center.y + radius * Math.sin(angle);
+                    
+                    const newRect = {
+                        left: x - wordWidth / 2,
+                        top: y - wordHeight / 2,
+                        right: x + wordWidth / 2,
+                        bottom: y + wordHeight / 2,
+                    };
+                    
+                    // 컨테이너 경계 체크
+                    if (newRect.left < 0 || newRect.right > containerWidth || newRect.top < 0 || newRect.bottom > containerHeight) {
+                        angle += 0.3; 
+                        radius += 2;
+                        attempts++;
+                        continue;
+                    }
+
+                    let hasCollision = false;
+                    for (const placed of placedWords) {
+                        if (intersects(placed.rect, newRect)) {
+                            hasCollision = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasCollision) {
+                        wordEl.style.left = `${newRect.left}px`;
+                        wordEl.style.top = `${newRect.top}px`;
+                        placedWords.push({ element: wordEl, rect: newRect });
+                        foundPosition = true;
+                    } else {
+                        angle += 0.3; // 나선형으로 탐색 각도 증가
+                        radius += 1;   // 나선형으로 탐색 반경 증가
+                    }
+                    attempts++;
+                }
+            });
+
+            // 모든 위치 계산이 끝난 후, 한 번에 DOM에 추가
+            placedWords.forEach(word => container.appendChild(word.element));
+        }
+
+
+        function handleCsvExport() {
+            if (displayedResults.length === 0) { alert('저장할 데이터가 없습니다.'); return; }
+            const hasTopic = displayedResults[0].hasOwnProperty('topic');
+            const headers = ['번호', '날짜', ...(hasTopic ? ['AI 분류'] : []), '제목', 'URL(원본)', '요약'];
+            const rows = displayedResults.map((item) => {
+                const rowData = [item.originalIndex + 1, item.pubDate, ...(hasTopic ? [item.topic || '' ] : []), item.title, item.originallink, item.description];
+                return rowData.map(str => `"${String(str || '').replace(/"/g, '""')}"`).join(',');
+            });
+            const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement("a");
+            if(link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute("href", url);
+                link.setAttribute("download", `뉴스검색_${dom.query.value.replace(/[^a-zA-Z0-9가-힣]/g, '_')}_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.csv`);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+        initializeEventListeners();
+    </script>
+</body>
+</html>

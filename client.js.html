@@ -1,0 +1,283 @@
+<script type="module">
+// pdf.js 라이브러리 import
+import * as pdfjsLib from "https://mozilla.github.io/pdf.js/build/pdf.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://mozilla.github.io/pdf.js/build/pdf.worker.mjs";
+
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Element References ---
+    const textInput = document.getElementById('text-input');
+    const fileInput = document.getElementById('file-input');
+    const fileUploadArea = document.getElementById('file-upload-area');
+    const fileNameDisplay = document.getElementById('file-name');
+    const convertBtn = document.getElementById('convert-btn');
+    const visualizeBtn = document.getElementById('visualize-btn');
+    const statusMessage = document.getElementById('status-message');
+    const loader = document.getElementById('loader');
+    const graphContainer = document.getElementById('graph-container');
+    const jsonOutputContainer = document.getElementById('json-output-container');
+    const jsonOutput = document.getElementById('json-output');
+    const copyJsonBtn = document.getElementById('copy-json-btn');
+    
+    let jsonData = null;
+    let pdfFile = null;
+
+    // --- UI Update Functions ---
+    function showLoader(show) {
+        loader.style.display = show ? 'block' : 'none';
+    }
+
+    function setStatus(message, type) {
+        statusMessage.textContent = message;
+        statusMessage.className = type; // 'error' or 'success'
+        statusMessage.style.display = message ? 'block' : 'none';
+    }
+
+    function setButtonsDisabled(disabled) {
+        convertBtn.disabled = disabled;
+        // 시각화 버튼은 JSON 데이터가 있을 때만 활성화
+        visualizeBtn.disabled = disabled || !jsonData;
+    }
+
+    // --- File Handling ---
+    fileUploadArea.addEventListener('click', () => fileInput.click());
+    
+    const preventDefaults = e => { e.preventDefault(); e.stopPropagation(); };
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        fileUploadArea.addEventListener(eventName, preventDefaults, false);
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        fileUploadArea.addEventListener(eventName, () => fileUploadArea.classList.add('dragover'), false);
+    });
+    ['dragleave', 'drop'].forEach(eventName => {
+        fileUploadArea.addEventListener(eventName, () => fileUploadArea.classList.remove('dragover'), false);
+    });
+
+    fileUploadArea.addEventListener('drop', e => {
+        handleFile(e.dataTransfer.files[0]);
+    }, false);
+
+    fileInput.addEventListener('change', e => {
+        if (e.target.files.length) {
+            handleFile(e.target.files[0]);
+        }
+    });
+
+    function handleFile(file) {
+        if (file && file.type === 'application/pdf') {
+            pdfFile = file;
+            fileNameDisplay.textContent = file.name;
+            textInput.value = ''; // 텍스트 입력 초기화
+            setStatus('', '');
+        } else {
+            pdfFile = null;
+            fileNameDisplay.textContent = '선택된 파일 없음';
+            setStatus('PDF 파일만 업로드할 수 있습니다.', 'error');
+        }
+    }
+
+    async function extractTextFromPdf(file) {
+        const reader = new FileReader();
+        return new Promise((resolve, reject) => {
+            reader.onload = async (event) => {
+                try {
+                    const pdfDoc = await pdfjsLib.getDocument({ data: event.target.result }).promise;
+                    let fullText = '';
+                    for (let i = 1; i <= pdfDoc.numPages; i++) {
+                        const page = await pdfDoc.getPage(i);
+                        const textContent = await page.getTextContent();
+                        fullText += textContent.items.map(item => item.str).join(' ') + '\n';
+                    }
+                    resolve(fullText);
+                } catch (error) {
+                    reject('PDF 텍스트 추출 중 오류 발생: ' + error.message);
+                }
+            };
+            reader.onerror = () => reject('파일을 읽는 중 오류가 발생했습니다.');
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    // --- API Call & Data Handling ---
+    convertBtn.addEventListener('click', async () => {
+        let inputText = textInput.value.trim();
+
+        // 입력 소스 결정
+        if (pdfFile) {
+            inputText = ''; // PDF 우선
+        } else if (!inputText) {
+            setStatus('분석할 텍스트를 입력하거나 PDF 파일을 업로드하세요.', 'error');
+            return;
+        }
+
+        setStatus('', '');
+        setButtonsDisabled(true);
+        showLoader(true);
+        jsonOutputContainer.style.display = 'none';
+        jsonData = null;
+
+        try {
+            if (pdfFile) {
+                inputText = await extractTextFromPdf(pdfFile);
+            }
+            
+            // google.script.run으로 서버 함수 호출
+            google.script.run
+                .withSuccessHandler(onJsonConversionSuccess)
+                .withFailureHandler(onJsonConversionFailure)
+                .callGeminiApi(inputText);
+
+        } catch (error) {
+            onJsonConversionFailure({ message: error });
+        }
+    });
+
+    function onJsonConversionSuccess(jsonString) {
+        showLoader(false);
+        try {
+            jsonData = JSON.parse(jsonString);
+            jsonOutput.textContent = JSON.stringify(jsonData, null, 2);
+            jsonOutputContainer.style.display = 'block';
+            setStatus('JSON 데이터 변환 성공!', 'success');
+        } catch (e) {
+            jsonData = null;
+            setStatus('API가 반환한 데이터가 유효한 JSON이 아닙니다.', 'error');
+            jsonOutput.textContent = jsonString; // 디버깅을 위해 원본 텍스트 표시
+            jsonOutputContainer.style.display = 'block';
+        }
+        setButtonsDisabled(false);
+    }
+
+    function onJsonConversionFailure(error) {
+        console.error('서버 호출 실패:', error);
+        showLoader(false);
+        setStatus('오류 발생: ' + error.message, 'error');
+        setButtonsDisabled(false);
+        jsonData = null;
+    }
+
+    // --- Visualization ---
+    visualizeBtn.addEventListener('click', () => {
+        if (jsonData && jsonData.nodes && jsonData.relationships) {
+            setStatus('그래프를 생성합니다...', 'success');
+            renderGraph(jsonData);
+        } else {
+            setStatus('시각화할 유효한 데이터가 없습니다.', 'error');
+        }
+    });
+    
+    copyJsonBtn.addEventListener('click', () => {
+        if(jsonData){
+            navigator.clipboard.writeText(JSON.stringify(jsonData, null, 2))
+                .then(() => setStatus('JSON 데이터가 클립보드에 복사되었습니다.', 'success'))
+                .catch(err => setStatus('복사 실패: ' + err, 'error'));
+        }
+    });
+
+    // D3.js 렌더링 함수
+    function renderGraph(data) {
+        graphContainer.innerHTML = ''; // 이전 그래프 삭제
+        const width = graphContainer.clientWidth;
+        const height = graphContainer.clientHeight;
+
+        const svg = d3.select("#graph-container").append("svg")
+            .attr("width", width)
+            .attr("height", height)
+            .call(d3.zoom().on("zoom", (event) => {
+                g.attr("transform", event.transform);
+            }));
+
+        const g = svg.append("g");
+        
+        const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+        const simulation = d3.forceSimulation(data.nodes)
+            .force("link", d3.forceLink(data.relationships).id(d => d.id).distance(150))
+            .force("charge", d3.forceManyBody().strength(-300))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("collision", d3.forceCollide().radius(d => 30));
+
+        const link = g.append("g")
+            .attr("class", "links")
+            .selectAll("line")
+            .data(data.relationships)
+            .enter().append("line")
+            .attr("class", "link")
+            .attr("stroke-width", 2);
+
+        const linkLabel = g.append("g")
+            .attr("class", "link-labels")
+            .selectAll("text")
+            .data(data.relationships)
+            .enter().append("text")
+            .attr("class", "link-label")
+            .text(d => d.type);
+
+        const node = g.append("g")
+            .attr("class", "nodes")
+            .selectAll("g")
+            .data(data.nodes)
+            .enter().append("g")
+            .attr("class", "node")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        node.append("circle")
+            .attr("r", 15)
+            .attr("fill", d => color(d.label));
+
+        node.append("text")
+            .text(d => d.properties.name || d.id)
+            .attr("x", 18)
+            .attr("y", 5);
+
+        const tooltip = d3.select(".tooltip");
+
+        node.on("mouseover", (event, d) => {
+            tooltip.transition().duration(200).style("opacity", .9);
+            let tooltipContent = `<strong>ID:</strong> ${d.id}<br><strong>Label:</strong> ${d.label}`;
+            for (const key in d.properties) {
+                tooltipContent += `<br><strong>${key}:</strong> ${d.properties[key]}`;
+            }
+            tooltip.html(tooltipContent)
+                .style("left", (event.pageX + 15) + "px")
+                .style("top", (event.pageY - 28) + "px");
+        }).on("mouseout", () => {
+            tooltip.transition().duration(500).style("opacity", 0);
+        });
+
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+            linkLabel
+                .attr("x", d => (d.source.x + d.target.x) / 2)
+                .attr("y", d => (d.source.y + d.target.y) / 2);
+        });
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+    }
+});
+</script>
+
