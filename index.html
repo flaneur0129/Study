@@ -10,6 +10,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Newsreader:wght@400;500;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
+    <!-- vis.js for relationship graph -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link href="https://unpkg.com/vis-network/styles/vis-network.css" rel="stylesheet" type="text/css" />
+
     <script>
       tailwind.config = {
         theme: {
@@ -71,6 +75,42 @@
         text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
         z-index: 10;
       }
+      /* vis-network 커스텀 스타일 */
+      #graphContainer .vis-network {
+        outline: none;
+      }
+      /* 노드 클릭 팝업 스타일 */
+      #node-articles-popup {
+        display: none;
+        position: fixed;
+        z-index: 100;
+        background-color: white;
+        border: 1px solid #d2d2d7;
+        border-radius: 0.75rem;
+        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
+        width: 400px;
+        max-height: 300px;
+      }
+      #node-articles-popup-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #e5e7eb;
+      }
+      #node-articles-popup-content {
+        padding: 1rem;
+        overflow-y: auto;
+        max-height: calc(300px - 50px);
+      }
+      #node-articles-popup-content a {
+        color: #0071e3;
+        text-decoration: none;
+        font-weight: 500;
+      }
+      #node-articles-popup-content a:hover {
+        text-decoration: underline;
+      }
     </style>
 </head>
 <body class="bg-light-bg text-light-text font-sans">
@@ -113,6 +153,10 @@
                                 <button id="classifyBtn" class="w-full bg-primary/10 text-primary font-semibold py-2.5 px-4 rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center gap-2">
                                     <span class="material-symbols-outlined">psychology</span>
                                     <span>AI 분류 분석</span>
+                                </button>
+                                <button id="relationshipBtn" class="w-full bg-primary/10 text-primary font-semibold py-2.5 px-4 rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center gap-2">
+                                    <span class="material-symbols-outlined">hub</span>
+                                    <span>AI 관계도 분석</span>
                                 </button>
                                 <button id="analyzeBtn" class="w-full bg-primary/10 text-primary font-semibold py-2.5 px-4 rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center gap-2">
                                     <span class="material-symbols-outlined">article</span>
@@ -168,6 +212,27 @@
             <div id="wordCloudContainer" class="p-8 overflow-y-auto flex flex-wrap items-center justify-center gap-4" style="position: relative; min-height: 500px;"></div>
         </div>
     </div>
+    
+    <div id="graphModal" class="fixed inset-0 bg-gray-900 bg-opacity-75 z-[60] hidden items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between p-6 border-b border-gray-200">
+                <h2 class="text-2xl font-bold text-gray-900">AI 관계도 분석</h2>
+                <button id="graphCloseBtn" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+                </button>
+            </div>
+            <div id="graphContainer" class="flex-1 w-full h-full"></div>
+        </div>
+    </div>
+
+    <!-- 신규 추가: 노드 클릭 시 기사 목록을 보여줄 팝업 -->
+    <div id="node-articles-popup">
+        <div id="node-articles-popup-header">
+            <h3 id="node-articles-popup-title" class="font-semibold text-sm"></h3>
+            <button id="node-articles-popup-close" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+        <div id="node-articles-popup-content"></div>
+    </div>
 
     <div id="dateFilterPopup" class="filter-popup absolute bg-white p-4 rounded-lg shadow-lg border z-20 w-64">
         <h4 class="font-semibold mb-2 text-sm">날짜 필터</h4>
@@ -213,9 +278,9 @@
             totalCount: document.getElementById('totalCount'),
             searchBtn: document.getElementById('searchBtn'),
             classifyBtn: document.getElementById('classifyBtn'),
+            relationshipBtn: document.getElementById('relationshipBtn'),
             analyzeBtn: document.getElementById('analyzeBtn'),
             wordCloudBtn: document.getElementById('wordCloudBtn'),
-            resetFilterBtn: document.getElementById('resetFilterBtn'),
             csvBtn: document.getElementById('csvBtn'),
             status: document.getElementById('status'),
             resultsContainer: document.getElementById('results-container'),
@@ -224,6 +289,9 @@
             wordCloudModal: document.getElementById('wordCloudModal'),
             wordCloudContainer: document.getElementById('wordCloudContainer'),
             wordCloudCloseBtn: document.getElementById('wordCloudCloseBtn'),
+            graphModal: document.getElementById('graphModal'),
+            graphContainer: document.getElementById('graphContainer'),
+            graphCloseBtn: document.getElementById('graphCloseBtn'),
             textFilterPopup: document.getElementById('textFilterPopup'),
             textFilterPopupTitle: document.getElementById('textFilterPopupTitle'),
             textFilterInput: document.getElementById('textFilterInput'),
@@ -242,18 +310,27 @@
             chatHistory: document.getElementById('chat-history'),
             chatInput: document.getElementById('chat-input'),
             chatSendBtn: document.getElementById('chat-send-btn'),
+            // 팝업 관련 DOM 추가
+            nodeArticlesPopup: document.getElementById('node-articles-popup'),
+            nodeArticlesPopupTitle: document.getElementById('node-articles-popup-title'),
+            nodeArticlesPopupContent: document.getElementById('node-articles-popup-content'),
+            nodeArticlesPopupClose: document.getElementById('node-articles-popup-close'),
         };
         
         function initializeEventListeners() {
             initializeUI();
             dom.searchBtn.addEventListener('click', handleSearch);
             dom.classifyBtn.addEventListener('click', handleClassification);
+            dom.relationshipBtn.addEventListener('click', handleRelationshipAnalysis);
             dom.analyzeBtn.addEventListener('click', handleAdvancedAnalysis);
             dom.wordCloudBtn.addEventListener('click', handleWordCloud);
             dom.csvBtn.addEventListener('click', handleCsvExport);
             
             dom.wordCloudCloseBtn.addEventListener('click', () => dom.wordCloudModal.classList.add('hidden'));
             dom.wordCloudModal.addEventListener('click', (e) => { if (e.target === dom.wordCloudModal) dom.wordCloudModal.classList.add('hidden'); });
+            
+            dom.graphCloseBtn.addEventListener('click', () => dom.graphModal.classList.add('hidden'));
+            dom.graphModal.addEventListener('click', (e) => { if (e.target === dom.graphModal) dom.graphModal.classList.add('hidden'); });
 
             dom.textFilterApplyBtn.addEventListener('click', applyTextFilter);
             dom.textFilterClearBtn.addEventListener('click', clearTextFilter);
@@ -267,6 +344,14 @@
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     handleAskGemini();
+                }
+            });
+
+            // 팝업 닫기 이벤트 추가
+            dom.nodeArticlesPopupClose.addEventListener('click', () => dom.nodeArticlesPopup.style.display = 'none');
+            document.addEventListener('click', (e) => {
+                if (!dom.nodeArticlesPopup.contains(e.target) && !e.target.closest('.vis-network')) {
+                   dom.nodeArticlesPopup.style.display = 'none';
                 }
             });
 
@@ -382,14 +467,6 @@
             dom.categoryFilterPopup.style.display = 'block';
         }
 
-        function resetAllFiltersAndSort() {
-            if (currentResults.length === 0) return;
-            activeFilters = {};
-            displayedResults = [...currentResults];
-            updateStatus(`총 ${currentResults.length}개의 기사를 표시합니다.`);
-            renderTable();
-        }
-
         function applyAllFiltersAndSort() {
             let results = [...currentResults];
             Object.keys(activeFilters).forEach(key => {
@@ -459,24 +536,24 @@
                     dom.chatHistory.innerHTML = '';
                 }, '뉴스 검색'))
                 .withFailureHandler(error => { 
-                  hideLoader(); 
-                  displayError(`뉴스 검색 실패: ${error.message}`); 
-                  updateActionButtonsState();
+                    hideLoader(); 
+                    displayError(`뉴스 검색 실패: ${error.message}`); 
+                    updateActionButtonsState();
                 })
                 .searchNaverNews(dom.query.value, dom.startDate.value, dom.endDate.value, count);
         }
         
         function initializeUI() {
-          updateStatus('분석할 뉴스를 검색해주세요.');
-          updateActionButtonsState();
-          renderTable();
+            updateStatus('분석할 뉴스를 검색해주세요.');
+            updateActionButtonsState();
+            renderTable();
         }
 
         function renderTable() {
             if (currentResults.length === 0) {
-              dom.resultsContainer.innerHTML = '<div class="p-8 text-center text-light-text-secondary">검색 결과가 여기에 표시됩니다.</div>';
-              dom.chatContainer.classList.add('hidden');
-              return;
+                dom.resultsContainer.innerHTML = '<div class="p-8 text-center text-light-text-secondary">검색 결과가 여기에 표시됩니다.</div>';
+                dom.chatContainer.classList.add('hidden');
+                return;
             }
             const hasTopic = currentResults.some(item => item.hasOwnProperty('topic'));
             const headers = [
@@ -514,18 +591,18 @@
             }).join('');
 
             let tableHTML = `<div class="overflow-x-auto"><table class="min-w-full text-sm">
-                  <thead class="bg-gray-50"><tr>${headerHtml}</tr></thead>
-                  <tbody class="bg-white divide-y divide-gray-200">
-                    ${displayedResults.map((item) => `
-                      <tr class="hover:bg-gray-50">
-                        <td class="px-6 py-4 whitespace-nowrap text-light-text-secondary">${item.originalIndex + 1}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-light-text-secondary">${item.pubDate}</td>
-                        ${hasTopic ? `<td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${categoryColors[item.topic] || 'bg-gray-100 text-gray-800'}">${item.topic || ''}</span></td>` : ''}
-                        <td class="px-6 py-4 whitespace-nowrap"><a href="${item.originallink}" target="_blank" class="text-light-text font-semibold hover:text-primary transition-colors">${item.title}</a></td>
-                        <td class="px-6 py-4 text-light-text-secondary whitespace-nowrap">${item.description}</td>
-                      </tr>`).join('')}
-                  </tbody>
-                </table></div>`;
+                        <thead class="bg-gray-50"><tr>${headerHtml}</tr></thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                          ${displayedResults.map((item) => `
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-6 py-4 whitespace-nowrap text-light-text-secondary">${item.originalIndex + 1}</td>
+                                <td class="px-6 py-4 whitespace-nowrap text-light-text-secondary">${item.pubDate}</td>
+                                ${hasTopic ? `<td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${categoryColors[item.topic] || 'bg-gray-100 text-gray-800'}">${item.topic || ''}</span></td>` : ''}
+                                <td class="px-6 py-4 whitespace-nowrap"><a href="${item.originallink}" target="_blank" class="text-light-text font-semibold hover:text-primary transition-colors">${item.title}</a></td>
+                                <td class="px-6 py-4 text-light-text-secondary whitespace-nowrap">${item.description}</td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table></div>`;
             dom.resultsContainer.innerHTML = tableHTML;
 
             document.querySelectorAll('.filterable-header').forEach(header => {
@@ -544,14 +621,14 @@
         }
 
         function setAllButtonsDisabled(disabled) {
-          [dom.searchBtn, dom.classifyBtn, dom.analyzeBtn, dom.wordCloudBtn, dom.resetFilterBtn, dom.csvBtn].forEach(btn => {
+          [dom.searchBtn, dom.classifyBtn, dom.relationshipBtn, dom.analyzeBtn, dom.wordCloudBtn, dom.csvBtn].forEach(btn => {
             if(btn) btn.disabled = disabled;
           });
         }
 
         function updateActionButtonsState() {
             const disabled = currentResults.length === 0;
-            [dom.classifyBtn, dom.analyzeBtn, dom.wordCloudBtn, dom.resetFilterBtn, dom.csvBtn].forEach(btn => {
+            [dom.classifyBtn, dom.relationshipBtn, dom.analyzeBtn, dom.wordCloudBtn, dom.csvBtn].forEach(btn => {
               if(btn) btn.disabled = disabled;
             });
         }
@@ -569,6 +646,7 @@
             dom.loaderOverlay.classList.add('hidden');
             dom.loaderOverlay.classList.remove('flex');
             setAllButtonsDisabled(false);
+            updateActionButtonsState();
         }
 
         function displayError(message) { 
@@ -620,8 +698,146 @@
             } finally {
                 hideLoader();
                 applyAllFiltersAndSort();
-                updateActionButtonsState();
             }
+        }
+        
+        function handleRelationshipAnalysis() {
+            if (displayedResults.length === 0) { alert('분석할 데이터가 없습니다.'); return; }
+            
+            const payload = displayedResults.filter(item => !item.topic || item.topic !== '비관련');
+            if (payload.length === 0) {
+              alert('분석할 관련 기사가 없습니다. "비관련"으로 분류되지 않은 기사가 하나 이상 필요합니다.');
+              return;
+            }
+
+            showLoader('AI 관계도 분석 중...');
+            const newsText = payload.map(item => `${item.title}. ${item.description}`).join('\n\n');
+            
+            google.script.run
+                .withSuccessHandler(response => handleServerResponse(response, data => {
+                    hideLoader();
+                    displayRelationshipGraph(data);
+                }, 'AI 관계도 분석'))
+                .withFailureHandler(error => { 
+                    hideLoader(); 
+                    displayError(`AI 관계도 분석 실패: ${error.message}`); 
+                })
+                .getRelationshipData(newsText);
+        }
+
+        // ==============================================================
+        //  수정된 함수: displayRelationshipGraph
+        // ==============================================================
+        function displayRelationshipGraph(graphData) {
+            const container = dom.graphContainer;
+            container.innerHTML = '';
+            dom.graphModal.classList.remove('hidden');
+            dom.graphModal.classList.add('flex');
+            
+            if (!graphData.nodes || graphData.nodes.length === 0) {
+              container.innerHTML = '<p class="p-8 text-center text-light-text-secondary">기사에서 유의미한 관계를 추출하지 못했습니다.</p>';
+              return;
+            }
+
+            const nodeColors = {
+                '인물': { background: '#fecaca', border: '#b91c1c' },
+                '기관': { background: '#dbeafe', border: '#1d4ed8' },
+                '장소': { background: '#d1fae5', border: '#047857' },
+                '금액': { background: '#fef08a', border: '#a16207' },
+                '날짜': { background: '#e0e7ff', border: '#4338ca' },
+                '직책': { background: '#fee2e2', border: '#991b1b' }
+            };
+
+            const nodes = new vis.DataSet(graphData.nodes.map(node => {
+                // 수정: 툴팁을 HTML 요소로 생성하여 <br> 태그가 렌더링되도록 함
+                const titleElement = document.createElement('div');
+                titleElement.innerHTML = `<b>${node.properties.name}</b><br>종류: ${node.label}`;
+
+                return {
+                    id: node.id,
+                    label: node.properties.name,
+                    title: titleElement, // HTML 요소를 title로 할당
+                    group: node.label,
+                    color: nodeColors[node.label] || { background: '#e5e7eb', border: '#4b5563' },
+                    font: { color: '#1d1d1f' }
+                };
+            }));
+
+            const edges = new vis.DataSet(graphData.relationships.map(rel => ({
+                from: rel.start_node_id,
+                to: rel.end_node_id,
+                label: rel.type.replace(/_/g, ' '),
+                arrows: 'to',
+                font: { align: 'middle', size: 10, color: '#6e6e73' },
+                color: { color: '#d2d2d7', highlight: '#0071e3' }
+            })));
+
+            const options = {
+                nodes: {
+                    // 수정: shape 옵션을 제거하여 기본 도형(타원)으로 변경
+                    margin: 10,
+                    borderWidth: 1.5,
+                    font: { size: 14, face: 'Inter' },
+                },
+                edges: {
+                    width: 1.5,
+                    smooth: { type: 'cubicBezier' }
+                },
+                physics: {
+                    forceAtlas2Based: {
+                        gravitationalConstant: -50,
+                        centralGravity: 0.01,
+                        springLength: 200,
+                        springConstant: 0.08
+                    },
+                    minVelocity: 0.75,
+                    solver: 'forceAtlas2Based'
+                },
+                interaction: {
+                    dragNodes: true,
+                    hover: true,
+                    tooltipDelay: 200,
+                    navigationButtons: false,
+                    keyboard: true
+                },
+                layout: {
+                  improvedLayout: true
+                }
+            };
+            
+            const network = new vis.Network(container, { nodes: nodes, edges: edges }, options);
+
+            network.on("click", function (params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const clickedNode = nodes.get(nodeId);
+                    const keyword = clickedNode.label;
+                    
+                    const relevantArticles = displayedResults.filter(item => 
+                        (item.title && item.title.includes(keyword)) || 
+                        (item.description && item.description.includes(keyword))
+                    );
+
+                    dom.nodeArticlesPopupTitle.textContent = `'${keyword}' 관련 기사`;
+                    let contentHtml = '<ul class="space-y-2 text-sm">';
+                    if (relevantArticles.length > 0) {
+                        relevantArticles.forEach(item => {
+                            contentHtml += `<li><a href="${item.originallink}" target="_blank" title="${item.title}">#${item.originalIndex + 1}: ${item.title}</a></li>`;
+                        });
+                    } else {
+                        contentHtml += '<li>관련 기사를 찾을 수 없습니다.</li>';
+                    }
+                    contentHtml += '</ul>';
+                    dom.nodeArticlesPopupContent.innerHTML = contentHtml;
+                    
+                    const popup = dom.nodeArticlesPopup;
+                    popup.style.left = `${params.pointer.DOM.x + 15}px`;
+                    popup.style.top = `${params.pointer.DOM.y + 15}px`;
+                    popup.style.display = 'block';
+                } else {
+                    dom.nodeArticlesPopup.style.display = 'none';
+                }
+            });
         }
 
         function handleAdvancedAnalysis() {
@@ -636,13 +852,11 @@
             google.script.run
                 .withSuccessHandler(response => handleServerResponse(response, data => {
                     hideLoader();
-                    updateActionButtonsState();
                     openAnalysisInNewWindow(data.markdown); 
                 }, 'AI 보고서 생성'))
                 .withFailureHandler(error => { 
-                  hideLoader(); 
-                  displayError(`AI 보고서 생성 실패: ${error.message}`); 
-                  updateActionButtonsState();
+                    hideLoader(); 
+                    displayError(`AI 보고서 생성 실패: ${error.message}`); 
                 })
                 .performAdvancedAnalysis(payload);
         }
@@ -769,14 +983,12 @@
             google.script.run
                 .withSuccessHandler(response => handleServerResponse(response, displayWordCloud, '키워드 분석'))
                 .withFailureHandler(error => { 
-                  hideLoader();
-                  dom.wordCloudContainer.innerHTML = `<p class="text-red-600">키워드 분석 실패: ${error.message}</p>`; 
-                  updateActionButtonsState();
+                    hideLoader();
+                    dom.wordCloudContainer.innerHTML = `<p class="text-red-600">키워드 분석 실패: ${error.message}</p>`; 
+                    updateActionButtonsState();
                 })
                 .getNounsForKeywordAnalysis(analysisPayload, dom.query.value);
         }
-
-        // --- NEW INTERACTIVE WORD CLOUD LOGIC ---
 
         function intersects(rect1, rect2) {
             const padding = 4; // 단어 간 최소 간격
@@ -787,9 +999,7 @@
         }
 
         function handleWordClick(word) {
-            // 제목(title)을 기준으로 필터링합니다.
             activeFilters['title'] = word;
-            // 다른 텍스트 필터가 있다면 초기화합니다.
             delete activeFilters['description'];
             
             applyAllFiltersAndSort();
@@ -821,7 +1031,6 @@
                 
                 wordEl.addEventListener('click', () => handleWordClick(item.word));
 
-                // 임시로 추가해서 크기 측정
                 container.appendChild(wordEl);
                 const wordRect = wordEl.getBoundingClientRect();
                 container.removeChild(wordEl);
@@ -844,7 +1053,6 @@
                         bottom: y + wordHeight / 2,
                     };
                     
-                    // 컨테이너 경계 체크
                     if (newRect.left < 0 || newRect.right > containerWidth || newRect.top < 0 || newRect.bottom > containerHeight) {
                         angle += 0.3; 
                         radius += 2;
@@ -866,17 +1074,14 @@
                         placedWords.push({ element: wordEl, rect: newRect });
                         foundPosition = true;
                     } else {
-                        angle += 0.3; // 나선형으로 탐색 각도 증가
-                        radius += 1;   // 나선형으로 탐색 반경 증가
+                        angle += 0.3; 
+                        radius += 1;  
                     }
                     attempts++;
                 }
             });
-
-            // 모든 위치 계산이 끝난 후, 한 번에 DOM에 추가
             placedWords.forEach(word => container.appendChild(word.element));
         }
-
 
         function handleCsvExport() {
             if (displayedResults.length === 0) { alert('저장할 데이터가 없습니다.'); return; }
