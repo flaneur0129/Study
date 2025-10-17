@@ -1,197 +1,214 @@
 /**
- * @OnlyCurrentDoc
- *
- * 네이버 뉴스 검색 결과를 Gemini AI로 분석하는 웹 앱의 서버 스크립트입니다.
- */
+* @OnlyCurrentDoc
+*
+* 네이버 뉴스 검색 결과를 Gemini AI로 분석하는 웹 앱의 서버 스크립트입니다.
+*/
+
 
 // 웹 앱을 처음 열 때 index.html 파일을 보여주는 함수
 function doGet() {
-  return HtmlService.createHtmlOutputFromFile('index.html')
-    .setTitle('네이버 뉴스 AI 분석기')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
+  return HtmlService.createHtmlOutputFromFile('index.html')
+    .setTitle('네이버 뉴스 AI 분석기')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
 }
+
 
 // --- API 인증 정보 ---
-const NAVER_CLIENT_ID = "lrLO5M0a8yOimY1Yy79a";
-const NAVER_CLIENT_SECRET = "FlrWaso5Fo";
-const GEMINI_API_KEY = "AIzaSyDxp8O9lt_pjXjbzJ-ESmB0OQmgTvyhyi0";
+// 보안을 위해 API 키는 스크립트 속성으로 관리하는 것을 권장합니다.
+// 1. Apps Script 편집기 좌측 메뉴에서 [프로젝트 설정 ⚙️]으로 이동합니다.
+// 2. '스크립트 속성' 섹션에서 [스크립트 속성 추가] 버튼을 클릭합니다.
+// 3. NAVER_CLIENT_ID, NAVER_CLIENT_SECRET, GEMINI_API_KEY 를 추가합니다.
+const SCRIPT_PROPERTIES = PropertiesService.getScriptProperties();
+const NAVER_CLIENT_ID = SCRIPT_PROPERTIES.getProperty('NAVER_CLIENT_ID') || "YOUR_NAVER_CLIENT_ID";
+const NAVER_CLIENT_SECRET = SCRIPT_PROPERTIES.getProperty('NAVER_CLIENT_SECRET') || "YOUR_NAVER_CLIENT_SECRET";
+const GEMINI_API_KEY = SCRIPT_PROPERTIES.getProperty('GEMINI_API_KEY') || "YOUR_GEMINI_API_KEY";
+
+
 
 /**
- * AI 응답 텍스트에서 순수한 JSON 부분만 추출하는 함수
- */
+* AI 응답 텍스트에서 순수한 JSON 부분만 추출하는 함수
+*/
 function extractJsonFromString(text) {
-  const match = text.match(/```(json)?\s*([\s\S]*?)\s*```/);
-  if (match && match[2]) return match[2].trim();
-  
-  const firstBracket = text.indexOf('{');
-  const firstSquare = text.indexOf('[');
-  let start = -1;
-  
-  if (firstBracket === -1) start = firstSquare;
-  else if (firstSquare === -1) start = firstBracket;
-  else start = Math.min(firstBracket, firstSquare);
-  if (start === -1) return null;
+  // 입력값이 문자열이 아닌 경우(undefined, null 등)를 처리하는 방어 코드 추가
+  if (typeof text !== 'string') {
+    return null;
+  }
+  const match = text.match(/```(json)?\s*([\s\S]*?)\s*```/);
+  if (match && match[2]) return match[2].trim();
+  const firstBracket = text.indexOf('{');
+  const firstSquare = text.indexOf('[');
+  let start = -1;
+  if (firstBracket === -1) start = firstSquare;
+  else if (firstSquare === -1) start = firstBracket;
+  else start = Math.min(firstBracket, firstSquare);
+  if (start === -1) return null;
 
-  const lastBracket = text.lastIndexOf('}');
-  const lastSquare = text.lastIndexOf(']');
-  let end = Math.max(lastBracket, lastSquare);
-  if (end === -1) return null;
-  
-  return text.substring(start, end + 1);
+  const lastBracket = text.lastIndexOf('}');
+  const lastSquare = text.lastIndexOf(']');
+  let end = Math.max(lastBracket, lastSquare);
+  if (end === -1) return null;
+  return text.substring(start, end + 1);
 }
 
+
 /**
- * Gemini API를 호출하는 범용 헬퍼 함수
- */
+* Gemini API를 호출하는 범용 헬퍼 함수
+*/
 function callGeminiAPI(prompt, model) {
-  if (!GEMINI_API_KEY || GEMINI_API_KEY.includes("YOUR_GEMINI_API_KEY")) {
-    throw new Error("Gemini API 키가 Code.gs 파일에 설정되지 않았습니다.");
-  }
-  
-  const userKey = Session.getTemporaryActiveUserKey();
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}&quotaUser=${userKey}`;
-  
-  const payload = { "contents": [{ "parts": [{ "text": prompt }] }] };
-  const options = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(payload), 'muteHttpExceptions': true };
-  
-  const maxRetries = 3;
-  let delay = 1000;
-  for (let i = 0; i < maxRetries; i++) {
-    const response = UrlFetchApp.fetch(url, options);
-    const responseCode = response.getResponseCode();
-    const resultText = response.getContentText();
-    if (responseCode === 200) {
-      try {
-        const result = JSON.parse(resultText);
-        if (result.candidates && result.candidates[0].content.parts[0].text) {
-          return result.candidates[0].content.parts[0].text;
-        } else {
-          let errorMessage = "Gemini API로부터 유효한 응답을 받지 못했습니다.";
-          if (result.promptFeedback && result.promptFeedback.blockReason) {
-            errorMessage += ` 이유: ${result.promptFeedback.blockReason}`;
-          }
-          throw new Error(errorMessage);
-        }
-      } catch (e) {
-        throw new Error(`API 응답(JSON) 파싱 실패: ${e.message}. 원본 응답: ${resultText}`);
-      }
-    } else if ((responseCode === 429 || responseCode >= 500) && i < maxRetries - 1) {
-      Utilities.sleep(delay + Math.random() * 1000);
-      delay *= 2;
-    } else {
-      throw new Error(`AI 분석 API 오류 (코드: ${responseCode}): ${resultText}`);
-    }
-  }
-  throw new Error("최대 재시도 횟수 초과. API가 계속해서 요청을 거부합니다.");
+  if (!GEMINI_API_KEY || GEMINI_API_KEY.includes("YOUR_GEMINI_API_KEY")) {
+    throw new Error("Gemini API 키가 Code.gs 파일 또는 스크립트 속성에 설정되지 않았습니다.");
+  }
+  const userKey = Session.getTemporaryActiveUserKey();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}&quotaUser=${userKey}`;
+  const payload = { "contents": [{ "parts": [{ "text": prompt }] }] };
+  const options = { 'method': 'post', 'contentType': 'application/json', 'payload': JSON.stringify(payload), 'muteHttpExceptions': true };
+  const maxRetries = 3;
+  let delay = 1000;
+  for (let i = 0; i < maxRetries; i++) {
+    const response = UrlFetchApp.fetch(url, options);
+    const responseCode = response.getResponseCode();
+    const resultText = response.getContentText();
+    if (responseCode === 200) {
+      try {
+        const result = JSON.parse(resultText);
+        if (result.candidates && result.candidates[0].content.parts[0].text) {
+          return result.candidates[0].content.parts[0].text;
+        } else {
+          let errorMessage = "Gemini API로부터 유효한 응답을 받지 못했습니다.";
+          if (result.promptFeedback && result.promptFeedback.blockReason) {
+            errorMessage += ` 이유: ${result.promptFeedback.blockReason}`;
+          }
+          throw new Error(errorMessage);
+        }
+      } catch (e) {
+        throw new Error(`API 응답(JSON) 파싱 실패: ${e.message}. 원본 응답: ${resultText}`);
+      }
+    } else if ((responseCode === 429 || responseCode >= 500) && i < maxRetries - 1) {
+      Utilities.sleep(delay + Math.random() * 1000);
+      delay *= 2;
+    } else {
+      throw new Error(`AI 분석 API 오류 (코드: ${responseCode}): ${resultText}`);
+    }
+  }
+  throw new Error("최대 재시도 횟수 초과. API가 계속해서 요청을 거부합니다.");
 }
 
+
 /**
- * 클라이언트로 호출되는 모든 서버 함수를 위한 래퍼 함수
- */
+* 클라이언트로 호출되는 모든 서버 함수를 위한 래퍼 함수
+*/
 function safeExecute(func, ...args) {
-  try {
-    const result = func(...args);
-    return result;
-  } catch (e) {
-    Logger.log(`Error in ${func.name}: ${e.stack}`);
-    return JSON.stringify({ error: `서버 실행 오류: ${e.message}` });
-  }
+  try {
+    const result = func(...args);
+    return result;
+  } catch (e) {
+    Logger.log(`Error in ${func.name}: ${e.stack}`);
+    return JSON.stringify({ error: `서버 실행 오류: ${e.message}` });
+  }
 }
+
 
 function searchNaverNews(query, startDateStr, endDateStr, totalCount) {
-  return safeExecute(_searchNaverNews, query, startDateStr, endDateStr, totalCount);
+  return safeExecute(_searchNaverNews, query, startDateStr, endDateStr, totalCount);
 }
+
 
 function classifyNewsChunk(newsChunk) {
-  return safeExecute(_classifyNewsChunk, newsChunk);
+  return safeExecute(_classifyNewsChunk, newsChunk);
 }
+
+
+function getRelationshipData(newsText) {
+  return safeExecute(_getRelationshipData, newsText);
+}
+
 
 function performAdvancedAnalysis(newsData) {
-  return safeExecute(_performAdvancedAnalysis, newsData);
+  return safeExecute(_performAdvancedAnalysis, newsData);
 }
+
 
 function getNounsForKeywordAnalysis(newsData, searchQuery) {
-  return safeExecute(_getNounsForKeywordAnalysis, newsData, searchQuery);
+  return safeExecute(_getNounsForKeywordAnalysis, newsData, searchQuery);
 }
 
+
 function askGeminiAboutNews(question, newsData) {
-  return safeExecute(_askGeminiAboutNews, question, newsData);
+  return safeExecute(_askGeminiAboutNews, question, newsData);
 }
+
 
 
 function _searchNaverNews(query, startDateStr, endDateStr, totalCount) {
-  const desiredCount = parseInt(totalCount, 10) || 10;
-  if (!query || desiredCount <= 0) {
-    return JSON.stringify([]);
-  }
-  const encodedQuery = encodeURIComponent(query);
-  const allItems = [];
-  let collectedCount = 0;
-  
-  for (let start = 1; start <= 1000 && collectedCount < desiredCount; start += 100) {
-    const displayCount = Math.min(100, desiredCount - collectedCount);
-    if (displayCount <= 0) break;
-    const url = `https://openapi.naver.com/v1/search/news.json?query=${encodedQuery}&display=${displayCount}&start=${start}&sort=date`;
-    const options = {'method': 'get', 'headers': {'X-Naver-Client-Id': NAVER_CLIENT_ID, 'X-Naver-Client-Secret': NAVER_CLIENT_SECRET}, 'muteHttpExceptions': true};
-    
-    const response = UrlFetchApp.fetch(url, options);
-    const result = JSON.parse(response.getContentText());
-    if (response.getResponseCode() === 200) {
-      if (result.items && result.items.length > 0) {
-        allItems.push(...result.items);
-        collectedCount += result.items.length;
-      } else {
-        break;
-      }
-    } else {
-      throw new Error(`Naver API Error: ${result.errorMessage || 'Unknown Error'}`);
-    }
-  }
+  const desiredCount = parseInt(totalCount, 10) || 10;
+  if (!query || desiredCount <= 0) {
+    return JSON.stringify([]);
+  }
+  const encodedQuery = encodeURIComponent(query);
+  const allItems = [];
+  let collectedCount = 0;
+  for (let start = 1; start <= 1000 && collectedCount < desiredCount; start += 100) {
+    const displayCount = Math.min(100, desiredCount - collectedCount);
+    if (displayCount <= 0) break;
+    const url = `https://openapi.naver.com/v1/search/news.json?query=${encodedQuery}&display=${displayCount}&start=${start}&sort=date`;
+    const options = {'method': 'get', 'headers': {'X-Naver-Client-Id': NAVER_CLIENT_ID, 'X-Naver-Client-Secret': NAVER_CLIENT_SECRET}, 'muteHttpExceptions': true};
+    const response = UrlFetchApp.fetch(url, options);
+    const result = JSON.parse(response.getContentText());
+    if (response.getResponseCode() === 200) {
+      if (result.items && result.items.length > 0) {
+        allItems.push(...result.items);
+        collectedCount += result.items.length;
+      } else {
+        break;
+      }
+    } else {
+      throw new Error(`Naver API Error: ${result.errorMessage || 'Unknown Error'}`);
+    }
+  }
 
-  const startDate = startDateStr ? new Date(startDateStr) : null;
-  if(startDate) startDate.setUTCHours(0,0,0,0);
-  
-  const endDate = endDateStr ? new Date(endDateStr) : null;
-  if(endDate) endDate.setUTCHours(23,59,59,999);
+  const startDate = startDateStr ? new Date(startDateStr) : null;
+  if(startDate) startDate.setUTCHours(0,0,0,0);
+  const endDate = endDateStr ? new Date(endDateStr) : null;
+  if(endDate) endDate.setUTCHours(23,59,59,999);
 
-  const filteredItems = allItems.filter(item => {
-    if (!startDate && !endDate) return true;
-    try {
-      const itemDate = new Date(item.pubDate);
-      if (isNaN(itemDate.getTime())) return false;
-      const isAfterStart = startDate ? itemDate.getTime() >= startDate.getTime() : true;
-      const isBeforeEnd = endDate ? itemDate.getTime() <= endDate.getTime() : true;
-      return isAfterStart && isBeforeEnd;
-    } catch (e) {
-      return false;
-    }
-  });
+  const filteredItems = allItems.filter(item => {
+    if (!startDate && !endDate) return true;
+    try {
+      const itemDate = new Date(item.pubDate);
+      if (isNaN(itemDate.getTime())) return false;
+      const isAfterStart = startDate ? itemDate.getTime() >= startDate.getTime() : true;
+      const isBeforeEnd = endDate ? itemDate.getTime() <= endDate.getTime() : true;
+      return isAfterStart && isBeforeEnd;
+    } catch (e) {
+      return false;
+    }
+  });
 
-  const finalResults = filteredItems.map(item => ({
-    title: item.title.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"'),
-    link: item.link,
-    originallink: item.originallink,
-    description: item.description.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"'),
-    pubDate: new Date(item.pubDate).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })
-  }));
+  const finalResults = filteredItems.map(item => ({
+    title: item.title.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"'),
+    link: item.link,
+    originallink: item.originallink,
+    description: item.description.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"'),
+    pubDate: new Date(item.pubDate).toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })
+  }));
 
-  return JSON.stringify(finalResults);
+  return JSON.stringify(finalResults);
 }
 
+
 function _classifyNewsChunk(newsChunk) {
-  const topics = [
-    "수사/조사",
-    "명시적 탈세 혐의",
-    "잠재적 탈세 리스크",
-    "국제/역외 조세",
-    "기업 세무",
-    "세법/정책",
-    "경제 동향",
-    "비관련"
-  ];
-  const newsText = newsChunk.map(item => `[${item.originalIndex}] 제목: ${item.title}\n요약: ${item.description}`).join('\n---\n');
-  
-  const prompt = `1. 역할 및 임무 (Role & Mission)
+  const topics = [
+    "수사/조사",
+    "명시적 탈세 혐의",
+    "잠재적 탈세 리스크",
+    "국제/역외 조세",
+    "기업 세무",
+    "세법/정책",
+    "경제 동향",
+    "비관련"
+  ];
+  const newsText = newsChunk.map(item => `[${item.originalIndex}] 제목: ${item.title}\n요약: ${item.description}`).join('\n---\n');
+  const prompt = `1. 역할 및 임무 (Role & Mission)
 페르소나: 당신은 대한민국 국세청(NTS) 소속의 최고 수준의 AI 세무 분석 전문가이다.
 핵심 임무: 조세 정의를 수호하기 위해, 주어진 뉴스 데이터에서 잠재적인 탈세, 조세 회피, 또는 기타 세무 관련 이슈의 '가장 작은 단서'까지도 포착하는 것이다.
 핵심 원칙: 기계적인 정확성(Precision)보다 **탐지율/민감도(Recall)**를 최우선으로 한다. 조금이라도 의심스럽거나 관련성이 있다면, 과감하게 관련 카테고리로 분류해야 한다. 애매한 경우는 가장 가능성이 높은 카테고리로 분류하되, 명백히 어떤 범주에도 속하지 않을 때만 '비관련'으로 판단한다.
@@ -247,35 +264,116 @@ topic 값은 위 3. 상세 분류 기준에 명시된 8가지 카테고리 중 �
 
 [분석 대상 뉴스 데이터]
 ${newsText}`;
-  
-  const model = 'gemini-2.5-flash-lite';
-  const resultText = callGeminiAPI(prompt, model);
-  const cleanedText = extractJsonFromString(resultText);
-  if (!cleanedText) throw new Error("AI 분류 응답에서 유효한 JSON 배열을 찾지 못했습니다.");
-  
-  const classifications = JSON.parse(cleanedText);
-  return JSON.stringify(classifications);
+  const model = 'gemini-2.5-flash-preview-09-2025';
+  const resultText = callGeminiAPI(prompt, model);
+  const cleanedText = extractJsonFromString(resultText);
+  if (!cleanedText) throw new Error("AI 분류 응답에서 유효한 JSON 배열을 찾지 못했습니다.");
+  const classifications = JSON.parse(cleanedText);
+  return JSON.stringify(classifications);
 }
 
+
+function _getRelationshipData(newsText) {
+  const prompt = `## 지식 그래프 생성을 위한 JSON 추출 프롬프트
+당신은 지식 그래프(Knowledge Graph) 구축을 위해 텍스트에서 구조화된 정보를 추출하는 최고 수준의 알고리즘입니다. 당신의 임무는 주어진 텍스트에서 개체(Nodes)와 그들 사이의 관계(Relationships)를 정확하게 식별하고, 지정된 JSON 형식으로 결과를 반환하는 것입니다.
+
+[추출 규칙]
+
+1. **개체 (Nodes) 추출**:
+* 아래 **Node Types(한글)** 중 하나로 개체의 label을 지정합니다.
+* 추출된 실제 텍스트 값은 properties 객체 안의 name 키에 저장합니다.
+* 모든 노드는 고유한 문자열 id를 가져야 합니다.
+* **Node Types**: **인물, 기관, 장소, 금액, 날짜, 직책**
+
+2. **관계 (Relationships) 추출**:
+* 노드 간의 관계를 type으로 정의합니다. **type은 반드시 한글로, 간결하게 정의합니다.** (예: **최대주주, 설립, 조사, 위치**)
+* start_node_id와 end_node_id를 사용하여 관계의 방향을 명시합니다.
+* 관계에 대한 추가 정보(예: 시점, 금액)는 properties 객체에 저장할 수 있습니다.
+
+3. **출력 형식 (Output Format)**:
+* 반드시 아래에 명시된 JSON 스키마를 준수해야 합니다.
+* JSON 외에 다른 설명이나 \`\`\`json 과 같은 마크다운을 포함해서는 안 됩니다.
+\`\`\`json
+{
+  "nodes": [
+    {
+      "id": "string (unique)",
+      "label": "NodeType",
+      "properties": {
+        "name": "string (extracted text)"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "type": "RELATIONSHIP_TYPE",
+      "start_node_id": "string (source node id)",
+      "end_node_id": "string (target node id)",
+      "properties": {
+        "key": "value"
+      }
+    }
+  ]
+}
+\`\`\`
+
+[출력 예시]
+입력 텍스트: "알파전자의 최대주주인 김민준 씨가 2025년 10월 9일, 조세피난처인 케이맨 제도에 설립한 페이퍼컴퍼니 '오메가 홀딩스'를 통해 100억 원의 비자금을 조성한 혐의로 대한민국 검찰의 조사를 받고 있다."
+출력 JSON:
+\`\`\`json
+{
+  "nodes": [
+    { "id": "0", "label": "인물", "properties": { "name": "김민준" } },
+    { "id": "1", "label": "기관", "properties": { "name": "알파전자" } },
+    { "id": "2", "label": "직책", "properties": { "name": "최대주주" } },
+    { "id": "3", "label": "날짜", "properties": { "name": "2025년 10월 9일" } },
+    { "id": "4", "label": "장소", "properties": { "name": "케이맨 제도" } },
+    { "id": "5", "label": "기관", "properties": { "name": "오메가 홀딩스" } },
+    { "id": "6", "label": "금액", "properties": { "name": "100억 원" } },
+    { "id": "7", "label": "기관", "properties": { "name": "대한민국 검찰" } }
+  ],
+  "relationships": [
+    { "type": "소속", "start_node_id": "0", "end_node_id": "2", "properties": {} },
+    { "type": "최대주주", "start_node_id": "0", "end_node_id": "1", "properties": {} },
+    { "type": "설립", "start_node_id": "0", "end_node_id": "5", "properties": { "date": "2025-10-09", "location": "케이맨 제도" } },
+    { "type": "위치", "start_node_id": "5", "end_node_id": "4", "properties": {} },
+    { "type": "비자금 조성", "start_node_id": "0", "end_node_id": "6", "properties": { "method": "오메가 홀딩스" } },
+    { "type": "조사", "start_node_id": "7", "end_node_id": "0", "properties": {} }
+  ]
+}
+\`\`\`
+이제 아래에 제공되는 텍스트를 분석하여 위의 규칙과 형식에 따라 결과를 출력하세요.
+
+[분석할 텍스트]
+${newsText}`;
+  const model = 'gemini-2.5-flash-preview-09-2025';
+  const resultText = callGeminiAPI(prompt, model);
+  const cleanedText = extractJsonFromString(resultText);
+  if (!cleanedText) {
+    throw new Error("AI 관계도 분석 응답에서 유효한 JSON을 찾지 못했습니다.");
+  }
+  return cleanedText;
+}
+
+
 function _performAdvancedAnalysis(newsData) {
-    const ANALYSIS_LIMIT = 1000; 
-    let analysisTargetData = newsData.length > ANALYSIS_LIMIT ? newsData.slice(0, ANALYSIS_LIMIT) : newsData;
+  const ANALYSIS_LIMIT = 1000; 
+  let analysisTargetData = newsData.length > ANALYSIS_LIMIT ? newsData.slice(0, ANALYSIS_LIMIT) : newsData;
 
-    const articlesForJson = analysisTargetData.map(item => {
-        const formattedDate = item.pubDate.replace(/\.\s/g, '-').replace(/\.$/, '');
-        return {
-            id: item.originalIndex + 1,
-            date: formattedDate,
-            title: item.title,
-            link: item.originallink,
-            summary: item.description,
-            topic: item.topic || ''
-        };
-    });
-    
-    const newsArticlesJsonString = JSON.stringify({ news_articles: articlesForJson }, null, 2);
+  const articlesForJson = analysisTargetData.map(item => {
+    const formattedDate = item.pubDate.replace(/\.\s/g, '-').replace(/\.$/, '');
+    return {
+      id: item.originalIndex + 1,
+      date: formattedDate,
+      title: item.title,
+      link: item.originallink,
+      summary: item.description,
+      topic: item.topic || ''
+    };
+  });
+  const newsArticlesJsonString = JSON.stringify({ news_articles: articlesForJson }, null, 2);
 
-    const masterPrompt = `
+  const masterPrompt = `
 Part 1: SYSTEM 프롬프트: 페르소나 및 핵심 임무
 1.1. 역할 정의
 - 당신은 대한민국 국세청(NTS)의 외부 컨설턴트 역할을 수행하는 최고 수준의 데이터 분석 전문가임
@@ -326,7 +424,7 @@ ${newsArticlesJsonString}
 (가장 중요한 거시적 동향을 문단 형식으로 요약. 관련 기사 번호가 있다면 [#번호](URL) 형식으로 인용)
 
 **Top 3 뉴스 요약**
-    - (가장 중요한 뉴스 3개의 핵심 내용과 그 함의를 들여쓰기하여 요약. 관련 기사 번호가 있다면 [#번호](URL))
+- (가장 중요한 뉴스 3개의 핵심 내용과 그 함의를 들여쓰기하여 요약. 관련 기사 번호가 있다면 [#번호](URL))
 
 **시사점**
 (국세청이 즉시 주목해야 할 가장 중요한 리스크 및 전략적 시사점을 문단 형식으로 요약. 관련 기사 번호가 있다면 [#번호](URL))
@@ -346,11 +444,11 @@ ${newsArticlesJsonString}
 - 지시사항: 내부 분석 3단계에서 식별된 주요 개체를 **최소 5개 이상** 분석. 만약 5개 미만일 경우, 가능한 모든 개체를 분석. 불용어 및 일반 명사는 제외.
 ### (분석 대상 개체명)
 - **개요**: (개체에 대한 핵심 설명)
-- **관련 세무 이슈**: 
-    - (기사에서 드러난 해당 개체와 직접 관련된 세금 문제)
-- **선정 이유**: 
-    - **빈도수 높음**: (자주 언급되며 주목해야 할 사항)
-    - **탈세 연관성 높음**: (언급 빈도는 낮으나, 잠재적 탈세 혐의와 관련성이 높아 심층 분석이 필요한 사항)
+- **관련 세무 이슈**: 
+- (기사에서 드러난 해당 개체와 직접 관련된 세금 문제)
+- **선정 이유**: 
+- **빈도수 높음**: (자주 언급되며 주목해야 할 사항)
+- **탈세 연관성 높음**: (언급 빈도는 낮으나, 잠재적 탈세 혐의와 관련성이 높아 심층 분석이 필요한 사항)
 
 ## 5. 심층/특집 기사 분석
 ### (탐된 심층/특집 기사 제목)
@@ -367,7 +465,7 @@ ${newsArticlesJsonString}
 - 지시사항: **'잠재적 탈세/조세회피'로 분류된 모든 기사를 이 표에 반드시 포함하여 분석할 것**. 국세청의 실질적인 행동 계획 수립을 지원해야 함. 따라서 식별된 리스크를 유형별로 분류하고, 각 리스크가 국세청에 미칠 영향을 구체적으로 예측하며, 즉각 실행 가능한 단기 대응 방안을 **가장 구체적이고 상세하게 제시할 것**.
 | 리스크 유형 | 상세 내용 및 징후 | 국세청에 미치는 영향 | 대응 방안 제언 | 원문 |
 |---|---|---|---|---|
-| **신종 탈세 수법** | (예: NFT를 이용한 자금 세탁 및 소득 은닉 정황 포착) | 신규 과세 영역에 대한 추적 및 과세 어려움 증대 |  관련 거래소 정보 수집 강화 | [#1](...) |
+| **신종 탈세 수법** | (예: NFT를 이용한 자금 세탁 및 소득 은닉 정황 포착) | 신규 과세 영역에 대한 추적 및 과세 어려움 증대 | 관련 거래소 정보 수집 강화 | [#1](...) |
 | **세법 허점** | (예: 특정 비과세 항목의 변칙적 활용 사례 증가) | 특정 계층의 합법적 조세 회피 만연, 과세 형평성 훼손 | 관련 항목에 대한 기획 점검 실시 | [#2](...) |
 | **과세 인프라** | (예: AI 기반 분석 시스템 도입 지연 보도) | 탈세 패턴 조기 감지 실패, 조사 행정력 낭비 | 관련 시스템 도입 TF팀 구성 | [#3](...) |
 
@@ -392,21 +490,20 @@ ${newsArticlesJsonString}
 2.8. 최종 출력 명령
 - "제공된 모든 지침에 따라, 최고 수준의 컨설팅 보고서 형식으로 완전한 단일 문서의 보고서를 생성하십시오"
 `;
-    
-    const model = 'gemini-2.5-pro';
-    const resultText = callGeminiAPI(masterPrompt, model);
-    return JSON.stringify({ markdown: resultText });
+  const model = 'gemini-2.5-pro';
+  // FIX: 'prompt' was used instead of the defined 'masterPrompt' variable.
+  const resultText = callGeminiAPI(masterPrompt, model);
+  return JSON.stringify({ markdown: resultText });
 }
 
 
 function _getNounsForKeywordAnalysis(newsData, searchQuery) {
-  const ANALYSIS_LIMIT = 1000; 
-  let analysisTargetData = newsData.length > ANALYSIS_LIMIT ? newsData.slice(0, ANALYSIS_LIMIT) : newsData;
-  
-  const newsText = analysisTargetData.map(item => item.title + ". " + item.description).join('\n');
-  const searchKeywords = searchQuery.split('|').map(k => k.trim()).join(', ');
-  const stopwords = "금융,주가,국채,주주,부동산,시장,거래,투자,대출,금리,시스템,상품,제품,마진,가치,경제,무역,금융시장,정책,자본,증시,실적,기술주,포트폴리오,금거래,서울,아파트,집값,규제,업체,소비자,당국,자산,달러,국감,리스크,기업,국가,것,수,위해,대한,기자,뉴스,국가,산업,정부,협상,지역,시스템,주주,주택,소득,자금,발표,공개,관련,따르면,오전,오후,지난,올해,최근,현재,관계자,전문가,대표,위원장,의원,장관,상황,수준,규모,결과,지원,추진,강화,운영,사업,대책,가운데,이번,주요,때문";
-  const prompt = `주어진 텍스트에서 핵심 명사를 추출하는 임무가 주어집니다. 다음 두 단계를 따르십시오.
+  const ANALYSIS_LIMIT = 1000; 
+  let analysisTargetData = newsData.length > ANALYSIS_LIMIT ? newsData.slice(0, ANALYSIS_LIMIT) : newsData;
+  const newsText = analysisTargetData.map(item => item.title + ". " + item.description).join('\n');
+  const searchKeywords = searchQuery.split('|').map(k => k.trim()).join(', ');
+  const stopwords = "금융,주가,국채,주주,부동산,시장,거래,투자,대출,금리,시스템,상품,제품,마진,가치,경제,무역,금융시장,정책,자본,증시,실적,기술주,포트폴리오,금거래,서울,아파트,집값,규제,업체,소비자,당국,자산,달러,국감,리스크,기업,국가,것,수,위해,대한,기자,뉴스,국가,산업,정부,협상,지역,시스템,주주,주택,소득,자금,발표,공개,관련,따르면,오전,오후,지난,올해,최근,현재,관계자,전문가,대표,위원장,의원,장관,상황,수준,규모,결과,지원,추진,강화,운영,사업,대책,가운데,이번,주요,때문";
+  const prompt = `주어진 텍스트에서 핵심 명사를 추출하는 임무가 주어집니다. 다음 두 단계를 따르십시오.
 1. **불용어 판단 및 제거**: 먼저 텍스트 전체를 분석하여 문맥상 중요하지 않은 일반 명사, 장소, 단체 또는 너무 흔하게 사용되는 단어를 AI가 스스로 판단하여 불용어로 정의하고 목록화합니다. 이 목록에는 '${stopwords}' 및 '${searchKeywords}'가 기본적으로 포함되어야 합니다.
 2. **핵심 명사 추출**: 1단계에서 식별된 불용어를 제외한 나머지 텍스트에서, 고유명사를 포함한 가장 중요하고 빈도가 높은 핵심 명사를 최대 30개까지 추출합니다.
 
@@ -414,20 +511,19 @@ function _getNounsForKeywordAnalysis(newsData, searchQuery) {
 
 [텍스트]
 ${newsText}`;
-  
-  const model = 'gemini-flash-lite-latest';
-  const resultText = callGeminiAPI(prompt, model);
-  const cleanedText = extractJsonFromString(resultText);
-  if (!cleanedText) {
-    throw new Error("AI 키워드 분석 응답에서 유효한 JSON 배열을 찾지 못했습니다.");
-  }
-  
-  return cleanedText;
+  const model = 'gemini-2.5-flash-lite-preview-09-2025';
+  const resultText = callGeminiAPI(masterPrompt, model);
+  const cleanedText = extractJsonFromString(resultText);
+  if (!cleanedText) {
+    throw new Error("AI 키워드 분석 응답에서 유효한 JSON 배열을 찾지 못했습니다.");
+  }
+  return cleanedText;
 }
+
+
 function _askGeminiAboutNews(question, newsData) {
-  const newsText = newsData.map(item => `[기사 #${item.originalIndex + 1}] 제목: ${item.title}\n요약: ${item.description}`).join('\n\n');
-  const prompt = `당신은 AI 뉴스 분석 전문가입니다. 아래에 제공된 뉴스 기사 목록만을 참고하여 사용자의 질문에 답변해주십시오.
-  
+  const newsText = newsData.map(item => `[기사 #${item.originalIndex + 1}] 제목: ${item.title}\n요약: ${item.description}`).join('\n\n');
+  const prompt = `당신은 AI 뉴스 분석 전문가입니다. 아래에 제공된 뉴스 기사 목록만을 참고하여 사용자의 질문에 답변해주십시오.
 [뉴스 기사 목록]
 ${newsText}
 
@@ -436,7 +532,7 @@ ${question}
 
 답변은 반드시 제공된 뉴스 기사 내용에만 근거해야 합니다. 만약 기사에서 정보를 찾을 수 없다면, "제공된 뉴스 기사에서는 해당 정보를 찾을 수 없습니다."라고 답변해주십시오.`;
 
-  const model = 'gemini-2.5-flash';
-  const resultText = callGeminiAPI(prompt, model);
-  return JSON.stringify({ answer: resultText });
+  const model = 'gemini-2.5-flash-preview-09-2025';
+  const resultText = callGeminiAPI(prompt, model);
+  return JSON.stringify({ answer: resultText });
 }
